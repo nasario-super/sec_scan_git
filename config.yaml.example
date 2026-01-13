@@ -1,0 +1,105 @@
+# GitHub Security Scanner Configuration
+
+github:
+  # Authentication (can use env var GITHUB_TOKEN)
+  token: ${GITHUB_TOKEN}
+  
+  # Or GitHub App authentication
+  # app_id: null
+  # private_key_path: null
+  # installation_id: null
+  
+  # API settings
+  api_url: https://api.github.com
+  timeout: 30
+  retries: 3
+
+scan:
+  # Parallelism
+  parallel_repos: 4
+  parallel_analyzers: 2
+  
+  # Timeout per repo (seconds)
+  repo_timeout: 600
+  
+  # Clone strategy: full, shallow, sparse
+  clone_strategy: shallow
+  
+  # Branches to analyze
+  branches:
+    - default
+  
+  # History analysis
+  analyze_history: true
+  history_depth: 1000
+  
+  # Filters
+  include_languages: []
+  exclude_languages: []
+  include_repos: []
+  exclude_repos:
+    - "*-deprecated"
+    - "archive-*"
+  
+  # Skip paths
+  exclude_paths:
+    - "node_modules/"
+    - "vendor/"
+    - ".git/"
+    - "*.min.js"
+    - "*.lock"
+    - "__pycache__/"
+    - ".venv/"
+  
+  max_file_size_mb: 10
+
+analyzers:
+  secrets_enabled: true
+  secrets_patterns_file: patterns/secrets.yaml
+  secrets_entropy_check: true
+  secrets_entropy_threshold: 4.5
+  
+  vulnerabilities_enabled: true
+  vulnerabilities_ecosystems:
+    - python
+    - javascript
+    - java
+    - go
+  vulnerabilities_fail_on_severity: high
+  
+  sast_enabled: true
+  sast_rules_file: patterns/sast_rules.yaml
+  
+  iac_enabled: true
+  iac_checks_file: patterns/iac_checks.yaml
+
+output:
+  formats:
+    - json
+    - html
+  directory: ./reports
+  filename_template: "scan-{org}-{date}"
+  redact_secrets: true
+  redact_pattern: "[REDACTED]"
+  sarif_enabled: true
+  sarif_upload_to_github: false
+
+notifications:
+  slack_enabled: false
+  slack_webhook_url: ${SLACK_WEBHOOK}
+  slack_severity_threshold: high
+  
+  email_enabled: false
+  email_smtp_host: ""
+  email_recipients: []
+
+cache:
+  enabled: true
+  directory: ./.scanner-cache
+  ttl_hours: 24
+
+logging:
+  level: INFO
+  format: json
+  file: null
+

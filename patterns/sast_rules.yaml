@@ -1,0 +1,192 @@
+# SAST (Static Application Security Testing) Rules
+# Add custom rules here to extend security analysis
+
+rules:
+  # SQL Injection
+  - id: sast/sql-injection-format
+    name: SQL Injection (String Format)
+    pattern: 'execute\s*\(\s*["\'].*%s|execute\s*\(\s*f["\']|\.format\s*\('
+    severity: critical
+    description: "Potential SQL injection through string formatting"
+    remediation: "Use parameterized queries or prepared statements"
+    cwe_id: CWE-89
+    languages: [python, java, csharp, php]
+    references:
+      - https://owasp.org/www-community/attacks/SQL_Injection
+
+  - id: sast/sql-injection-concat
+    name: SQL Injection (Concatenation)
+    pattern: '(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE).*\+\s*["\']?\s*\w+\s*["\']?\s*\+'
+    severity: critical
+    description: "Potential SQL injection through string concatenation"
+    remediation: "Use parameterized queries instead of string concatenation"
+    cwe_id: CWE-89
+    languages: [python, java, csharp, php, javascript]
+
+  # XSS
+  - id: sast/xss-innerhtml
+    name: XSS (innerHTML)
+    pattern: 'innerHTML\s*='
+    severity: high
+    description: "Direct innerHTML assignment can lead to XSS"
+    remediation: "Use textContent or sanitize input before using innerHTML"
+    cwe_id: CWE-79
+    languages: [javascript, typescript]
+
+  - id: sast/xss-document-write
+    name: XSS (document.write)
+    pattern: 'document\.write\s*\('
+    severity: high
+    description: "document.write can introduce XSS vulnerabilities"
+    remediation: "Use safer DOM manipulation methods"
+    cwe_id: CWE-79
+    languages: [javascript, typescript]
+
+  - id: sast/xss-dangerously-set
+    name: XSS (React dangerouslySetInnerHTML)
+    pattern: 'dangerouslySetInnerHTML'
+    severity: high
+    description: "dangerouslySetInnerHTML can introduce XSS vulnerabilities"
+    remediation: "Sanitize HTML content or use alternative approaches"
+    cwe_id: CWE-79
+    languages: [javascript, typescript]
+
+  # Command Injection
+  - id: sast/command-injection-os-system
+    name: Command Injection (os.system)
+    pattern: 'os\.system\s*\('
+    severity: critical
+    description: "os.system is vulnerable to command injection"
+    remediation: "Use subprocess with shell=False and proper argument handling"
+    cwe_id: CWE-78
+    languages: [python]
+
+  - id: sast/command-injection-subprocess-shell
+    name: Command Injection (subprocess shell=True)
+    pattern: 'subprocess\.(?:call|run|Popen)\s*\([^)]*shell\s*=\s*True'
+    severity: critical
+    description: "subprocess with shell=True is vulnerable to command injection"
+    remediation: "Use shell=False and pass arguments as a list"
+    cwe_id: CWE-78
+    languages: [python]
+
+  - id: sast/command-injection-exec
+    name: Command Injection (exec)
+    pattern: '\bexec\s*\('
+    severity: high
+    description: "exec() can execute arbitrary code"
+    remediation: "Avoid using exec() with user input"
+    cwe_id: CWE-78
+    languages: [python, php]
+
+  # Insecure Deserialization
+  - id: sast/insecure-pickle
+    name: Insecure Deserialization (pickle)
+    pattern: 'pickle\.loads?\s*\('
+    severity: critical
+    description: "pickle.load can execute arbitrary code"
+    remediation: "Use safer serialization formats like JSON"
+    cwe_id: CWE-502
+    languages: [python]
+
+  - id: sast/insecure-yaml
+    name: Insecure YAML Loading
+    pattern: 'yaml\.load\s*\([^)]*(?!Loader\s*=\s*(?:yaml\.)?SafeLoader)'
+    severity: critical
+    description: "yaml.load without SafeLoader can execute arbitrary code"
+    remediation: "Use yaml.safe_load() or yaml.load(..., Loader=yaml.SafeLoader)"
+    cwe_id: CWE-502
+    languages: [python]
+
+  - id: sast/insecure-eval
+    name: Dangerous eval()
+    pattern: '\beval\s*\('
+    severity: critical
+    description: "eval() can execute arbitrary code"
+    remediation: "Avoid eval() with user input. Use ast.literal_eval for safe evaluation"
+    cwe_id: CWE-95
+    languages: [python, javascript, php]
+
+  # Weak Cryptography
+  - id: sast/weak-crypto-md5
+    name: Weak Cryptography (MD5)
+    pattern: '\bMD5\b|md5\s*\(|hashlib\.md5'
+    severity: medium
+    description: "MD5 is cryptographically broken"
+    remediation: "Use SHA-256 or stronger hash functions"
+    cwe_id: CWE-327
+    exclude_patterns:
+      - '#.*MD5'
+      - '//.*MD5'
+      - checksum
+      - etag
+
+  - id: sast/weak-crypto-sha1
+    name: Weak Cryptography (SHA1)
+    pattern: '\bSHA1\b(?!_)|sha1\s*\(|hashlib\.sha1'
+    severity: medium
+    description: "SHA1 is cryptographically weak"
+    remediation: "Use SHA-256 or stronger hash functions"
+    cwe_id: CWE-327
+
+  - id: sast/weak-random
+    name: Weak Random Number Generator
+    pattern: '\bRandom\(\)|random\.random\(\)|Math\.random\(\)'
+    severity: medium
+    description: "Weak random number generator used for security"
+    remediation: "Use cryptographically secure random: secrets module or crypto.randomBytes"
+    cwe_id: CWE-330
+
+  # Path Traversal
+  - id: sast/path-traversal
+    name: Path Traversal
+    pattern: 'open\s*\([^)]*\+|os\.path\.join\s*\([^)]*(?:request|input|params)'
+    severity: high
+    description: "Potential path traversal vulnerability"
+    remediation: "Validate and sanitize file paths, use os.path.realpath"
+    cwe_id: CWE-22
+    languages: [python]
+
+  # Debug Settings
+  - id: sast/debug-enabled
+    name: Debug Mode Enabled
+    pattern: 'DEBUG\s*=\s*True|app\.debug\s*=\s*True|FLASK_DEBUG\s*=\s*1'
+    severity: medium
+    description: "Debug mode should not be enabled in production"
+    remediation: "Disable debug mode in production environments"
+    cwe_id: CWE-489
+    languages: [python]
+    exclude_patterns:
+      - '\.env\.example'
+      - '\.env\.sample'
+      - '#.*DEBUG'
+
+  # SSRF
+  - id: sast/ssrf
+    name: Potential SSRF
+    pattern: 'requests\.get\s*\([^)]*(?:request|input|params|url)'
+    severity: high
+    description: "Potential Server-Side Request Forgery"
+    remediation: "Validate and whitelist URLs before making requests"
+    cwe_id: CWE-918
+    languages: [python]
+
+  # Insecure HTTP
+  - id: sast/insecure-http
+    name: Insecure HTTP URL
+    pattern: 'http://(?!localhost|127\.0\.0\.1|0\.0\.0\.0)[^\s"\''"]+'
+    severity: low
+    description: "HTTP URLs should use HTTPS for security"
+    remediation: "Use HTTPS instead of HTTP"
+    cwe_id: CWE-319
+    exclude_patterns:
+      - 'http://schemas'
+      - 'http://www\.w3\.org'
+      - 'http://xmlns'
+    confidence: 0.6
+
+# Settings
+settings:
+  ignore_test_files: true
+  max_file_size_kb: 1000
+

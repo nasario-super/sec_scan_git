@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gss
+  labels:
+    app.kubernetes.io/name: github-security-scanner
+    app.kubernetes.io/part-of: gss

@@ -1,0 +1,223 @@
+# =============================================================================
+# GitHub Security Scanner - Docker Compose
+# Complete local development environment
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # =========================================================================
+  # PostgreSQL Database (Aurora Serverless v2 compatible)
+  # =========================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: gss-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gss}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gss_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-gss_db}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gss} -d ${POSTGRES_DB:-gss_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - gss-network
+
+  # =========================================================================
+  # Redis (ElastiCache compatible)
+  # Used for: Caching, Task Queue, Session Storage
+  # =========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: gss-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - gss-network
+
+  # =========================================================================
+  # API Service (Main Backend)
+  # =========================================================================
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.api
+    container_name: gss-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gss}:${POSTGRES_PASSWORD:-gss_secure_password}@postgres:5432/${POSTGRES_DB:-gss_db}
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      CACHE_REDIS_URL: redis://redis:6379/1
+      # Auth (disabled for local development)
+      GSS_AUTH_ENABLED: ${GSS_AUTH_ENABLED:-false}
+      GSS_SECRET_KEY: ${GSS_SECRET_KEY:-change-me-in-production-use-openssl-rand-hex-32}
+      GSS_ADMIN_USER: ${GSS_ADMIN_USER:-admin}
+      GSS_ADMIN_PASS: ${GSS_ADMIN_PASS:-admin}
+      # GitHub
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # CORS
+      GSS_ALLOWED_ORIGINS: ${GSS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+    # Porta 8000 exposta apenas internamente para o nginx
+    expose:
+      - "8000"
+    networks:
+      - gss-network
+
+  # =========================================================================
+  # Scanner Worker (Background Job Processor)
+  # =========================================================================
+  worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.worker
+    container_name: gss-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gss}:${POSTGRES_PASSWORD:-gss_secure_password}@postgres:5432/${POSTGRES_DB:-gss_db}
+      REDIS_URL: redis://redis:6379/0
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Worker settings
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      SCAN_TIMEOUT: ${SCAN_TIMEOUT:-3600}
+    volumes:
+      - ./data:/app/data
+      - ./repos:/app/repos
+      - ./logs:/app/logs
+    networks:
+      - gss-network
+
+  # =========================================================================
+  # Frontend (Nginx + React)
+  # =========================================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.frontend
+      args:
+        VITE_API_URL: /api
+    container_name: gss-frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+    networks:
+      - gss-network
+
+  # =========================================================================
+  # Scheduler (Cron Jobs for Periodic Scans)
+  # =========================================================================
+  scheduler:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.worker
+    container_name: gss-scheduler
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gss}:${POSTGRES_PASSWORD:-gss_secure_password}@postgres:5432/${POSTGRES_DB:-gss_db}
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    command: ["python", "-m", "services.scanner-worker.scheduler"]
+    networks:
+      - gss-network
+
+  # =========================================================================
+  # Monitoring - Prometheus (Optional)
+  # =========================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: gss-prometheus
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    volumes:
+      - ./infrastructure/docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    networks:
+      - gss-network
+
+  # =========================================================================
+  # Monitoring - Grafana (Optional)
+  # =========================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: gss-grafana
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    networks:
+      - gss-network
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  gss-network:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:

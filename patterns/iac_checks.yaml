@@ -1,0 +1,209 @@
+# Infrastructure as Code (IaC) Security Checks
+# Add custom checks here for Terraform, Kubernetes, Docker, etc.
+
+checks:
+  # Terraform - AWS
+  - id: iac/tf-s3-no-encryption
+    name: S3 Bucket Without Encryption
+    pattern: 'resource\s+"aws_s3_bucket"\s+"[^"]+"\s*\{(?:(?!server_side_encryption).)*\}'
+    severity: high
+    description: "S3 bucket does not have server-side encryption enabled"
+    remediation: "Enable server_side_encryption_configuration for the S3 bucket"
+    iac_type: terraform
+    file_patterns: ["*.tf"]
+    multiline: true
+    references:
+      - https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_server_side_encryption_configuration
+
+  - id: iac/tf-s3-public-acl
+    name: S3 Bucket with Public ACL
+    pattern: 'acl\s*=\s*"public-read|acl\s*=\s*"public-read-write'
+    severity: critical
+    description: "S3 bucket has public ACL enabled"
+    remediation: "Remove public ACL and use bucket policies with least privilege"
+    iac_type: terraform
+    file_patterns: ["*.tf"]
+
+  - id: iac/tf-sg-open-ssh
+    name: Security Group Open SSH
+    pattern: 'ingress\s*\{[^}]*(?:from_port\s*=\s*22|to_port\s*=\s*22)[^}]*cidr_blocks\s*=\s*\[[^\]]*"0\.0\.0\.0/0"'
+    severity: critical
+    description: "Security group allows SSH access from anywhere"
+    remediation: "Restrict SSH access to specific IP ranges"
+    iac_type: terraform
+    file_patterns: ["*.tf"]
+    multiline: true
+
+  - id: iac/tf-sg-open-rdp
+    name: Security Group Open RDP
+    pattern: 'ingress\s*\{[^}]*(?:from_port\s*=\s*3389|to_port\s*=\s*3389)[^}]*cidr_blocks\s*=\s*\[[^\]]*"0\.0\.0\.0/0"'
+    severity: critical
+    description: "Security group allows RDP access from anywhere"
+    remediation: "Restrict RDP access to specific IP ranges"
+    iac_type: terraform
+    file_patterns: ["*.tf"]
+    multiline: true
+
+  - id: iac/tf-rds-no-encryption
+    name: RDS Without Encryption
+    pattern: 'resource\s+"aws_db_instance"[^{]*\{[^}]*storage_encrypted\s*=\s*false'
+    severity: high
+    description: "RDS instance does not have encryption at rest enabled"
+    remediation: "Set storage_encrypted = true"
+    iac_type: terraform
+    file_patterns: ["*.tf"]
+    multiline: true
+
+  - id: iac/tf-rds-public
+    name: RDS Publicly Accessible
+    pattern: 'resource\s+"aws_db_instance"[^{]*\{[^}]*publicly_accessible\s*=\s*true'
+    severity: high
+    description: "RDS instance is publicly accessible"
+    remediation: "Set publicly_accessible = false"
+    iac_type: terraform
+    file_patterns: ["*.tf"]
+    multiline: true
+
+  - id: iac/tf-ec2-imdsv1
+    name: EC2 IMDSv1 Enabled
+    pattern: 'http_tokens\s*=\s*"optional"'
+    severity: medium
+    description: "EC2 instance allows IMDSv1 which is less secure"
+    remediation: "Set http_tokens = required to enforce IMDSv2"
+    iac_type: terraform
+    file_patterns: ["*.tf"]
+
+  # Kubernetes
+  - id: iac/k8s-run-as-root
+    name: Container Running as Root
+    pattern: 'runAsUser:\s*0|runAsNonRoot:\s*false'
+    severity: high
+    description: "Container is configured to run as root user"
+    remediation: "Set runAsNonRoot: true and specify a non-root runAsUser"
+    iac_type: kubernetes
+    file_patterns: ["*.yaml", "*.yml"]
+
+  - id: iac/k8s-privileged
+    name: Privileged Container
+    pattern: 'privileged:\s*true'
+    severity: critical
+    description: "Container is running in privileged mode"
+    remediation: "Remove privileged: true unless absolutely necessary"
+    iac_type: kubernetes
+    file_patterns: ["*.yaml", "*.yml"]
+
+  - id: iac/k8s-host-network
+    name: Host Network Enabled
+    pattern: 'hostNetwork:\s*true'
+    severity: high
+    description: "Pod is using host network"
+    remediation: "Disable hostNetwork unless required"
+    iac_type: kubernetes
+    file_patterns: ["*.yaml", "*.yml"]
+
+  - id: iac/k8s-host-pid
+    name: Host PID Enabled
+    pattern: 'hostPID:\s*true'
+    severity: high
+    description: "Pod is sharing host PID namespace"
+    remediation: "Disable hostPID unless required"
+    iac_type: kubernetes
+    file_patterns: ["*.yaml", "*.yml"]
+
+  - id: iac/k8s-host-ipc
+    name: Host IPC Enabled
+    pattern: 'hostIPC:\s*true'
+    severity: high
+    description: "Pod is sharing host IPC namespace"
+    remediation: "Disable hostIPC unless required"
+    iac_type: kubernetes
+    file_patterns: ["*.yaml", "*.yml"]
+
+  - id: iac/k8s-secrets-plaintext
+    name: Secrets in Plaintext
+    pattern: 'kind:\s*Secret[\s\S]*?stringData:'
+    severity: medium
+    description: "Kubernetes Secret contains plaintext data"
+    remediation: "Use external secret management or sealed secrets"
+    iac_type: kubernetes
+    file_patterns: ["*.yaml", "*.yml"]
+    multiline: true
+
+  - id: iac/k8s-allow-privilege-escalation
+    name: Allow Privilege Escalation
+    pattern: 'allowPrivilegeEscalation:\s*true'
+    severity: high
+    description: "Container allows privilege escalation"
+    remediation: "Set allowPrivilegeEscalation: false"
+    iac_type: kubernetes
+    file_patterns: ["*.yaml", "*.yml"]
+
+  - id: iac/k8s-capabilities-all
+    name: All Capabilities Added
+    pattern: 'add:\s*\[\s*["\']?ALL["\']?\s*\]'
+    severity: critical
+    description: "Container has all capabilities added"
+    remediation: "Only add specific required capabilities"
+    iac_type: kubernetes
+    file_patterns: ["*.yaml", "*.yml"]
+
+  # Docker
+  - id: iac/docker-latest-tag
+    name: Docker Image Using Latest Tag
+    pattern: 'FROM\s+\S+:latest|FROM\s+[^\s:]+\s*$'
+    severity: medium
+    description: "Docker image uses 'latest' tag or no tag"
+    remediation: "Use specific version tags for reproducible builds"
+    iac_type: docker
+    file_patterns: ["Dockerfile*", "*.dockerfile"]
+
+  - id: iac/docker-user-root
+    name: Docker Running as Root
+    pattern: 'USER\s+root'
+    severity: medium
+    description: "Dockerfile explicitly runs as root user"
+    remediation: "Create and use a non-root user"
+    iac_type: docker
+    file_patterns: ["Dockerfile*", "*.dockerfile"]
+
+  - id: iac/docker-secrets-env
+    name: Secrets in Docker ENV
+    pattern: 'ENV\s+(?:PASSWORD|SECRET|API_KEY|TOKEN|PRIVATE_KEY|AWS_ACCESS_KEY|AWS_SECRET)\s*='
+    severity: high
+    description: "Secrets are hardcoded in Docker ENV instructions"
+    remediation: "Use Docker secrets or environment variables at runtime"
+    iac_type: docker
+    file_patterns: ["Dockerfile*", "*.dockerfile"]
+
+  - id: iac/docker-add-instead-copy
+    name: Using ADD Instead of COPY
+    pattern: '^ADD\s+(?!https?://)'
+    severity: low
+    description: "ADD used instead of COPY for local files"
+    remediation: "Use COPY unless you need ADD's tar extraction feature"
+    iac_type: docker
+    file_patterns: ["Dockerfile*", "*.dockerfile"]
+
+  - id: iac/docker-sudo
+    name: Using sudo in Dockerfile
+    pattern: 'RUN\s+.*\bsudo\b'
+    severity: low
+    description: "sudo is used in Dockerfile"
+    remediation: "Run commands as root before switching USER"
+    iac_type: docker
+    file_patterns: ["Dockerfile*", "*.dockerfile"]
+
+  - id: iac/docker-curl-bash
+    name: Curl to Bash Pattern
+    pattern: 'curl.*\|\s*(?:bash|sh)|wget.*\|\s*(?:bash|sh)'
+    severity: medium
+    description: "Potentially dangerous curl/wget piped to shell"
+    remediation: "Download scripts first, verify them, then execute"
+    iac_type: docker
+    file_patterns: ["Dockerfile*", "*.dockerfile"]
+
+# Settings
+settings:
+  skip_comments: true
+  max_file_size_kb: 500
+

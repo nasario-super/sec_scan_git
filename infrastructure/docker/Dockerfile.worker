@@ -1,0 +1,56 @@
+# =============================================================================
+# GitHub Security Scanner - Scanner Worker Service
+# Handles background scanning tasks from the queue
+# =============================================================================
+
+FROM python:3.11-slim
+
+LABEL maintainer="GSS Team"
+LABEL description="GitHub Security Scanner Worker Service"
+LABEL version="1.0.0"
+
+RUN groupadd -r gss && useradd -r -g gss gss
+
+WORKDIR /app
+
+# Install git for cloning repositories
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    openssh-client \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy project files
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -e "." && \
+    pip install --no-cache-dir redis celery
+
+COPY patterns/ ./patterns/
+COPY services/scanner-worker/ ./services/scanner-worker/
+COPY config.yaml ./
+
+RUN mkdir -p /app/data /app/repos /app/logs /app/.scanner-cache \
+    && chown -R gss:gss /app
+
+USER gss
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/src:/app/services/scanner-worker \
+    GSS_DATA_DIR=/app/data \
+    GSS_REPOS_DIR=/app/repos \
+    GSS_LOG_DIR=/app/logs \
+    GSS_CACHE_DIR=/app/.scanner-cache
+
+# Health check via Redis ping
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import redis; r = redis.Redis.from_url('${REDIS_URL:-redis://localhost:6379}'); r.ping()" || exit 1
+
+CMD ["python", "-m", "services.scanner-worker.worker"]
