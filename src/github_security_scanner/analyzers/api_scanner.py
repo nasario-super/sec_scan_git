@@ -28,10 +28,64 @@ from ..core.models import (
 )
 from ..utils.secure_logging import get_secure_logger
 from .secrets import DEFAULT_PATTERNS, SAFE_REFERENCE_PATTERNS, SecretPattern
+from .sast import DEFAULT_RULES as SAST_RULES, SASTRule
 from ..core.models import Severity
 
 console = Console()
 logger = get_secure_logger(__name__)
+
+
+# SAST search terms for API-based detection
+SAST_SEARCH_TERMS = [
+    # SQL Injection
+    ("execute(", "sql-injection"),
+    ("executeQuery", "sql-injection"),
+    ("raw_query", "sql-injection"),
+    ("rawQuery", "sql-injection"),
+    ("cursor.execute", "sql-injection"),
+    # XSS
+    ("innerHTML", "xss"),
+    ("document.write", "xss"),
+    ("dangerouslySetInnerHTML", "xss"),
+    ("v-html", "xss"),
+    (".html(", "xss"),
+    # Command Injection
+    ("os.system", "command-injection"),
+    ("subprocess.call", "command-injection"),
+    ("shell=True", "command-injection"),
+    ("child_process", "command-injection"),
+    ("exec(", "command-injection"),
+    # Deserialization
+    ("pickle.load", "deserialization"),
+    ("yaml.load", "deserialization"),
+    ("unserialize", "deserialization"),
+    ("ObjectInputStream", "deserialization"),
+    # Path Traversal
+    ("../", "path-traversal"),
+    ("readFileSync", "path-traversal"),
+    # SSRF
+    ("requests.get", "ssrf"),
+    ("urllib.request", "ssrf"),
+    ("fetch(", "ssrf"),
+    ("axios.get", "ssrf"),
+    # XXE
+    ("ElementTree.parse", "xxe"),
+    ("lxml.etree", "xxe"),
+    ("DocumentBuilder", "xxe"),
+    # NoSQL Injection
+    ("$where", "nosql-injection"),
+    # Weak Crypto
+    ("MD5", "weak-crypto"),
+    ("SHA1", "weak-crypto"),
+    ("DES", "weak-crypto"),
+    # SSL Issues
+    ("verify=False", "ssl-verify"),
+    ("CERT_NONE", "ssl-verify"),
+    ("rejectUnauthorized", "ssl-verify"),
+    # JWT Issues
+    ("algorithm='none'", "jwt-none"),
+    ("algorithms=['none']", "jwt-none"),
+]
 
 
 @dataclass
@@ -99,7 +153,9 @@ class APIScanner:
         self.settings = settings
         self.api_url = api_url
         self.patterns = self._load_patterns()
+        self.sast_rules = self._load_sast_rules()
         self.repos_scanned = 0  # Track scanned repos
+        self.enable_sast = getattr(settings.analyzers, 'sast_enabled', True)
         
         # Compile safe reference patterns
         self._safe_patterns = [
@@ -115,6 +171,13 @@ class APIScanner:
         for pattern in patterns:
             pattern.compile()
         return patterns
+    
+    def _load_sast_rules(self) -> list[SASTRule]:
+        """Load and compile SAST rules."""
+        rules = SAST_RULES.copy()
+        for rule in rules:
+            rule.compile()
+        return rules
     
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
@@ -622,6 +685,13 @@ class APIScanner:
                     logger.warning(f"Error searching for {pattern}: {e}")
                     continue
         
+        # SAST Analysis via API
+        if self.enable_sast:
+            console.print(f"\n[bold yellow]🔒 Scanning for SAST vulnerabilities...[/bold yellow]")
+            sast_findings = await self._scan_sast_patterns(org, repos)
+            findings.extend(sast_findings)
+            console.print(f"[bold]📊 SAST findings: {len(sast_findings)}[/bold]")
+        
         # Additional deep search: Search for specific high-value patterns directly
         console.print(f"\n[dim]🔬 Deep scanning for high-value patterns...[/dim]")
         high_value_patterns = [
@@ -871,6 +941,215 @@ class APIScanner:
                 seen[key] = finding
         
         return list(seen.values())
+    
+    async def _scan_sast_patterns(
+        self,
+        org: str,
+        repos: list[str],
+    ) -> list[Finding]:
+        """
+        Scan for SAST vulnerabilities (XSS, SQLi, etc.) via API.
+        
+        Args:
+            org: Organization name
+            repos: List of repository names
+            
+        Returns:
+            List of SAST findings
+        """
+        findings: list[Finding] = []
+        processed_files: set[str] = set()
+        
+        # Search for each SAST pattern type
+        for search_term, vuln_type in SAST_SEARCH_TERMS:
+            try:
+                console.print(f"  [dim]🔎 Searching for {vuln_type}: {search_term}[/dim]")
+                
+                async for result in self.search_code(search_term, org=org, max_results=200):
+                    file_id = f"{result.repository}:{result.file_path}:{vuln_type}"
+                    
+                    if file_id in processed_files:
+                        continue
+                    
+                    # Get file content for better analysis
+                    file_content = None
+                    if "/" in result.repository:
+                        owner, repo_name = result.repository.split("/", 1)
+                        try:
+                            file_content = await self.get_file_content(owner, repo_name, result.file_path)
+                        except Exception:
+                            pass
+                    
+                    content = file_content if file_content else " ".join(
+                        m.get("fragment", "") for m in result.text_matches
+                    )
+                    
+                    if not content:
+                        continue
+                    
+                    # Find matching SAST rule
+                    matching_rule = None
+                    for rule in self.sast_rules:
+                        if vuln_type in rule.id.lower() and rule._compiled_pattern:
+                            if rule._compiled_pattern.search(content):
+                                matching_rule = rule
+                                break
+                    
+                    if not matching_rule:
+                        # Create a generic finding based on search term
+                        matching_rule = self._create_generic_sast_rule(vuln_type, search_term)
+                    
+                    if matching_rule and matching_rule._compiled_pattern:
+                        match = matching_rule._compiled_pattern.search(content)
+                        if match:
+                            # Extract line info
+                            line_num = 0
+                            line_content = match.group(0)
+                            
+                            if file_content:
+                                line_num = file_content[:match.start()].count('\n') + 1
+                                lines = file_content.split('\n')
+                                if line_num <= len(lines):
+                                    line_content = lines[line_num - 1]
+                            
+                            finding = Finding(
+                                repository=result.repository,
+                                type=FindingType.BUG,
+                                category=matching_rule.id.split("/")[-1],
+                                severity=matching_rule.severity,
+                                states=[FindingState.ACTIVE],
+                                state_details=StateDetails(
+                                    is_in_default_branch=True,
+                                ),
+                                file_path=result.file_path,
+                                line_number=line_num,
+                                line_content=line_content[:200],
+                                confidence=matching_rule.confidence,
+                                false_positive_likelihood=FalsePositiveLikelihood.MEDIUM,
+                                remediation=matching_rule.remediation,
+                                references=matching_rule.references,
+                                rule_id=f"api-sast/{matching_rule.id}",
+                                rule_description=f"[API SAST] {matching_rule.description}",
+                                matched_pattern=matching_rule.pattern,
+                                cwe_id=matching_rule.cwe_id,
+                                tags=["api-scan", "sast", vuln_type],
+                            )
+                            findings.append(finding)
+                            console.print(
+                                f"    [yellow]⚠️ {vuln_type.upper()}: {matching_rule.name} "
+                                f"in {result.file_path}" + 
+                                (f":{line_num}" if line_num > 0 else "") + "[/yellow]"
+                            )
+                    
+                    processed_files.add(file_id)
+                    
+            except Exception as e:
+                logger.warning(f"Error scanning for {vuln_type}: {e}")
+                continue
+        
+        return self._deduplicate_findings(findings)
+    
+    def _create_generic_sast_rule(self, vuln_type: str, search_term: str) -> SASTRule:
+        """Create a generic SAST rule based on vulnerability type."""
+        vuln_configs = {
+            "sql-injection": {
+                "name": "SQL Injection",
+                "severity": Severity.CRITICAL,
+                "description": "Potential SQL injection vulnerability",
+                "remediation": "Use parameterized queries or prepared statements",
+                "cwe_id": "CWE-89",
+            },
+            "xss": {
+                "name": "Cross-Site Scripting (XSS)",
+                "severity": Severity.HIGH,
+                "description": "Potential XSS vulnerability",
+                "remediation": "Sanitize user input and use safe DOM methods",
+                "cwe_id": "CWE-79",
+            },
+            "command-injection": {
+                "name": "Command Injection",
+                "severity": Severity.CRITICAL,
+                "description": "Potential command injection vulnerability",
+                "remediation": "Avoid shell execution with user input",
+                "cwe_id": "CWE-78",
+            },
+            "deserialization": {
+                "name": "Insecure Deserialization",
+                "severity": Severity.CRITICAL,
+                "description": "Insecure deserialization detected",
+                "remediation": "Use safe serialization formats",
+                "cwe_id": "CWE-502",
+            },
+            "path-traversal": {
+                "name": "Path Traversal",
+                "severity": Severity.HIGH,
+                "description": "Potential path traversal vulnerability",
+                "remediation": "Validate and sanitize file paths",
+                "cwe_id": "CWE-22",
+            },
+            "ssrf": {
+                "name": "Server-Side Request Forgery",
+                "severity": Severity.HIGH,
+                "description": "Potential SSRF vulnerability",
+                "remediation": "Validate and whitelist URLs",
+                "cwe_id": "CWE-918",
+            },
+            "xxe": {
+                "name": "XML External Entity",
+                "severity": Severity.HIGH,
+                "description": "Potential XXE vulnerability",
+                "remediation": "Disable external entity processing",
+                "cwe_id": "CWE-611",
+            },
+            "nosql-injection": {
+                "name": "NoSQL Injection",
+                "severity": Severity.HIGH,
+                "description": "Potential NoSQL injection vulnerability",
+                "remediation": "Sanitize user input for queries",
+                "cwe_id": "CWE-943",
+            },
+            "weak-crypto": {
+                "name": "Weak Cryptography",
+                "severity": Severity.MEDIUM,
+                "description": "Weak cryptographic algorithm detected",
+                "remediation": "Use strong algorithms (AES-256, SHA-256+)",
+                "cwe_id": "CWE-327",
+            },
+            "ssl-verify": {
+                "name": "SSL Verification Disabled",
+                "severity": Severity.HIGH,
+                "description": "SSL certificate verification disabled",
+                "remediation": "Enable SSL verification",
+                "cwe_id": "CWE-295",
+            },
+            "jwt-none": {
+                "name": "JWT None Algorithm",
+                "severity": Severity.CRITICAL,
+                "description": "JWT with none algorithm is insecure",
+                "remediation": "Use HS256 or RS256 algorithms",
+                "cwe_id": "CWE-347",
+            },
+        }
+        
+        config = vuln_configs.get(vuln_type, {
+            "name": f"Security Issue ({vuln_type})",
+            "severity": Severity.MEDIUM,
+            "description": f"Potential {vuln_type} vulnerability",
+            "remediation": "Review and fix security issue",
+            "cwe_id": None,
+        })
+        
+        rule = SASTRule(
+            id=f"sast/{vuln_type}",
+            name=config["name"],
+            pattern=re.escape(search_term),
+            severity=config["severity"],
+            description=config["description"],
+            remediation=config["remediation"],
+            cwe_id=config.get("cwe_id"),
+        )
+        rule.compile()
+        return rule
 
 
 class IncrementalScanner:

@@ -24,8 +24,18 @@ import { format } from 'date-fns';
 
 
 const severityOptions: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
-const typeOptions: FindingType[] = ['secret', 'vulnerability', 'sast', 'iac', 'history'];
+const typeOptions: FindingType[] = ['secret', 'vulnerability', 'sast', 'iac', 'history', 'bug'];
 const statusOptions: RemediationStatus[] = ['open', 'in_progress', 'resolved', 'false_positive', 'accepted_risk'];
+
+// Type icons and labels for better visualization
+const typeConfig: Record<FindingType, { label: string; color: string }> = {
+  secret: { label: '🔑 Secret', color: 'text-neon-red' },
+  vulnerability: { label: '⚠️ Vulnerability', color: 'text-neon-yellow' },
+  sast: { label: '🔍 SAST', color: 'text-neon-purple' },
+  iac: { label: '☁️ IaC', color: 'text-neon-blue' },
+  history: { label: '📜 History', color: 'text-gray-400' },
+  bug: { label: '🐛 Bug', color: 'text-neon-orange' },
+};
 
 const statusConfig: Record<RemediationStatus, { label: string; icon: React.ElementType; color: string }> = {
   open: { label: 'Open', icon: AlertTriangle, color: 'text-neon-red' },
@@ -60,7 +70,9 @@ function FindingRow({ finding, expanded, onToggle, onStatusUpdate }: FindingRowP
         <td className="px-4 py-3">
           <div>
             <p className="text-sm font-medium text-gray-200">{finding.category}</p>
-            <p className="text-xs text-gray-500 capitalize">{finding.type}</p>
+            <p className={clsx('text-xs capitalize', typeConfig[finding.type]?.color || 'text-gray-500')}>
+              {typeConfig[finding.type]?.label || finding.type}
+            </p>
           </div>
         </td>
         <td className="px-4 py-3">
@@ -414,13 +426,13 @@ export function Findings() {
                     key={t}
                     onClick={() => toggleFilter('type', t)}
                     className={clsx(
-                      'px-3 py-1 text-xs rounded-md border transition-colors capitalize',
+                      'px-3 py-1 text-xs rounded-md border transition-colors',
                       filters.type?.includes(t)
                         ? 'bg-neon-blue/20 border-neon-blue text-neon-blue'
                         : 'border-cyber-border text-gray-400 hover:border-gray-500'
                     )}
                   >
-                    {t}
+                    {typeConfig[t]?.label || t}
                   </button>
                 ))}
               </div>

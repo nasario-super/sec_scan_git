@@ -2,7 +2,7 @@
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
 // Finding types
-export type FindingType = 'secret' | 'vulnerability' | 'sast' | 'iac' | 'history';
+export type FindingType = 'secret' | 'vulnerability' | 'sast' | 'iac' | 'history' | 'bug';
 
 // Finding states
 export type FindingState = 

@@ -1,11 +1,13 @@
 # SAST (Static Application Security Testing) Rules
-# Add custom rules here to extend security analysis
+# Comprehensive security analysis patterns
 
 rules:
-  # SQL Injection
+  # ============================================================================
+  # SQL INJECTION (CWE-89)
+  # ============================================================================
   - id: sast/sql-injection-format
     name: SQL Injection (String Format)
-    pattern: "execute\\s*\\(\\s*[\"'].*%s|execute\\s*\\(\\s*f[\"']|\\.format\\s*\\("
+    pattern: 'execute\s*\(\s*["\x27].*%s|execute\s*\(\s*f["\x27]|\.format\s*\('
     severity: critical
     description: "Potential SQL injection through string formatting"
     remediation: "Use parameterized queries or prepared statements"
@@ -16,14 +18,43 @@ rules:
 
   - id: sast/sql-injection-concat
     name: SQL Injection (Concatenation)
-    pattern: "(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE).*\\+\\s*[\"']?\\s*\\w+\\s*[\"']?\\s*\\+"
+    pattern: '(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE).*\+\s*["\x27]?\s*\w+\s*["\x27]?\s*\+'
     severity: critical
     description: "Potential SQL injection through string concatenation"
     remediation: "Use parameterized queries instead of string concatenation"
     cwe_id: CWE-89
     languages: [python, java, csharp, php, javascript]
 
-  # XSS
+  - id: sast/sql-injection-fstring
+    name: SQL Injection (f-string)
+    pattern: 'f["\x27](?:SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE).*\{'
+    severity: critical
+    description: "SQL query with f-string interpolation"
+    remediation: "Use parameterized queries instead of f-strings"
+    cwe_id: CWE-89
+    languages: [python]
+
+  - id: sast/sql-injection-raw-query
+    name: SQL Injection (Raw Query)
+    pattern: '(?:raw_query|rawQuery|executeQuery)\s*\([^)]*\+'
+    severity: critical
+    description: "Raw SQL query with concatenation"
+    remediation: "Use ORM methods or parameterized queries"
+    cwe_id: CWE-89
+    languages: [python, java, javascript]
+
+  - id: sast/sql-injection-template-literal
+    name: SQL Injection (Template Literal)
+    pattern: '`\s*(?:SELECT|INSERT|UPDATE|DELETE).*\$\{'
+    severity: critical
+    description: "SQL query with JavaScript template literal"
+    remediation: "Use prepared statements or query builders"
+    cwe_id: CWE-89
+    languages: [javascript, typescript]
+
+  # ============================================================================
+  # CROSS-SITE SCRIPTING - XSS (CWE-79)
+  # ============================================================================
   - id: sast/xss-innerhtml
     name: XSS (innerHTML)
     pattern: 'innerHTML\s*='
@@ -51,7 +82,63 @@ rules:
     cwe_id: CWE-79
     languages: [javascript, typescript]
 
-  # Command Injection
+  - id: sast/xss-v-html
+    name: XSS (Vue v-html)
+    pattern: 'v-html\s*='
+    severity: high
+    description: "Vue v-html directive can lead to XSS"
+    remediation: "Sanitize content or use v-text"
+    cwe_id: CWE-79
+    languages: [javascript, typescript]
+
+  - id: sast/xss-outerhtml
+    name: XSS (outerHTML)
+    pattern: 'outerHTML\s*='
+    severity: high
+    description: "outerHTML assignment can lead to XSS"
+    remediation: "Use safer DOM manipulation methods"
+    cwe_id: CWE-79
+    languages: [javascript, typescript]
+
+  - id: sast/xss-jquery-html
+    name: XSS (jQuery .html())
+    pattern: '\$\([^)]*\)\.html\s*\([^)]+\)'
+    severity: high
+    description: "jQuery .html() with dynamic content can lead to XSS"
+    remediation: "Use .text() or sanitize input"
+    cwe_id: CWE-79
+    languages: [javascript, typescript]
+
+  - id: sast/xss-dom-manipulation
+    name: XSS (DOM Manipulation)
+    pattern: '\.insertAdjacentHTML\s*\(|\.outerHTML\s*=|\.insertBefore\s*\('
+    severity: high
+    description: "DOM manipulation methods can introduce XSS"
+    remediation: "Sanitize content before DOM insertion"
+    cwe_id: CWE-79
+    languages: [javascript, typescript]
+
+  - id: sast/xss-angular-bypass
+    name: XSS (Angular bypassSecurityTrust)
+    pattern: 'bypassSecurityTrust(?:Html|Script|Style|Url|ResourceUrl)'
+    severity: high
+    description: "Angular security bypass can introduce XSS"
+    remediation: "Validate content before bypassing security"
+    cwe_id: CWE-79
+    languages: [typescript]
+
+  - id: sast/xss-php-echo
+    name: XSS (PHP Echo)
+    pattern: 'echo\s+\$(?:_GET|_POST|_REQUEST|_COOKIE)\['
+    severity: high
+    description: "Direct echo of user input without sanitization"
+    remediation: "Use htmlspecialchars() or htmlentities()"
+    cwe_id: CWE-79
+    languages: [php]
+
+  # ============================================================================
+  # COMMAND INJECTION (CWE-78)
+  # ============================================================================
   - id: sast/command-injection-os-system
     name: Command Injection (os.system)
     pattern: 'os\.system\s*\('
@@ -60,6 +147,8 @@ rules:
     remediation: "Use subprocess with shell=False and proper argument handling"
     cwe_id: CWE-78
     languages: [python]
+    references:
+      - https://owasp.org/www-community/attacks/Command_Injection
 
   - id: sast/command-injection-subprocess-shell
     name: Command Injection (subprocess shell=True)
@@ -71,15 +160,35 @@ rules:
     languages: [python]
 
   - id: sast/command-injection-exec
-    name: Command Injection (exec)
-    pattern: '\bexec\s*\('
-    severity: high
-    description: "exec() can execute arbitrary code"
-    remediation: "Avoid using exec() with user input"
+    name: Command Injection (exec/system)
+    pattern: '\b(?:exec|system|passthru|shell_exec|popen|proc_open)\s*\('
+    severity: critical
+    description: "Dangerous function that can execute arbitrary commands"
+    remediation: "Avoid using exec/system with user input"
     cwe_id: CWE-78
-    languages: [python, php]
+    languages: [python, php, ruby]
 
-  # Insecure Deserialization
+  - id: sast/command-injection-child-process
+    name: Command Injection (Node.js child_process)
+    pattern: '(?:child_process|execSync|spawnSync|exec)\s*\([^)]*\+'
+    severity: critical
+    description: "Node.js command execution with concatenation"
+    remediation: "Use spawn with shell=false and argument array"
+    cwe_id: CWE-78
+    languages: [javascript, typescript]
+
+  - id: sast/command-injection-backticks
+    name: Command Injection (Backticks)
+    pattern: '`[^`]*\$\{[^}]*\}[^`]*`'
+    severity: high
+    description: "Shell command in template literal with variable"
+    remediation: "Sanitize variables before command execution"
+    cwe_id: CWE-78
+    languages: [ruby, php]
+
+  # ============================================================================
+  # INSECURE DESERIALIZATION (CWE-502)
+  # ============================================================================
   - id: sast/insecure-pickle
     name: Insecure Deserialization (pickle)
     pattern: 'pickle\.loads?\s*\('
@@ -88,10 +197,12 @@ rules:
     remediation: "Use safer serialization formats like JSON"
     cwe_id: CWE-502
     languages: [python]
+    references:
+      - https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/17-Testing_for_Insecure_Deserialization
 
   - id: sast/insecure-yaml
     name: Insecure YAML Loading
-    pattern: 'yaml\.load\s*\([^)]*(?!Loader\s*=\s*(?:yaml\.)?SafeLoader)'
+    pattern: 'yaml\.load\s*\([^)]*\)'
     severity: critical
     description: "yaml.load without SafeLoader can execute arbitrary code"
     remediation: "Use yaml.safe_load() or yaml.load(..., Loader=yaml.SafeLoader)"
@@ -107,10 +218,180 @@ rules:
     cwe_id: CWE-95
     languages: [python, javascript, php]
 
-  # Weak Cryptography
+  - id: sast/insecure-unserialize
+    name: Insecure Deserialization (PHP unserialize)
+    pattern: '\bunserialize\s*\(\s*\$'
+    severity: critical
+    description: "PHP unserialize with user input is dangerous"
+    remediation: "Use json_decode() or validate input before unserialize"
+    cwe_id: CWE-502
+    languages: [php]
+
+  - id: sast/insecure-java-deserialize
+    name: Insecure Deserialization (Java ObjectInputStream)
+    pattern: 'ObjectInputStream\s*\([^)]*\)\.readObject\s*\(\)'
+    severity: critical
+    description: "Java deserialization can lead to RCE"
+    remediation: "Use safe deserialization libraries or input validation"
+    cwe_id: CWE-502
+    languages: [java]
+
+  # ============================================================================
+  # PATH TRAVERSAL (CWE-22)
+  # ============================================================================
+  - id: sast/path-traversal
+    name: Path Traversal
+    pattern: 'open\s*\([^)]*\+|os\.path\.join\s*\([^)]*(?:request|input|params)'
+    severity: high
+    description: "Potential path traversal vulnerability"
+    remediation: "Validate and sanitize file paths, use os.path.realpath"
+    cwe_id: CWE-22
+    languages: [python]
+
+  - id: sast/path-traversal-readfile
+    name: Path Traversal (readFile)
+    pattern: '(?:readFile|readFileSync|createReadStream)\s*\([^)]*\+'
+    severity: high
+    description: "File reading with path concatenation"
+    remediation: "Validate paths and use path.resolve with basedir check"
+    cwe_id: CWE-22
+    languages: [javascript, typescript]
+
+  - id: sast/path-traversal-dotdot
+    name: Path Traversal (../ pattern)
+    pattern: '(?:file|path)\s*[=:]\s*["\x27][^"\x27]*\.\.\/'
+    severity: high
+    description: "Path with ../ sequence detected"
+    remediation: "Sanitize paths and check for traversal attempts"
+    cwe_id: CWE-22
+    languages: [python, javascript, php]
+
+  # ============================================================================
+  # SERVER-SIDE REQUEST FORGERY - SSRF (CWE-918)
+  # ============================================================================
+  - id: sast/ssrf-requests
+    name: SSRF (requests library)
+    pattern: 'requests\.(?:get|post|put|delete|head|patch)\s*\([^)]*(?:request\.|input|params|url)'
+    severity: high
+    description: "Potential Server-Side Request Forgery"
+    remediation: "Validate and whitelist URLs before making requests"
+    cwe_id: CWE-918
+    languages: [python]
+
+  - id: sast/ssrf-urllib
+    name: SSRF (urllib)
+    pattern: 'urllib\.request\.urlopen\s*\([^)]*(?:request\.|input|params)'
+    severity: high
+    description: "Potential SSRF via urllib"
+    remediation: "Validate and whitelist URLs before making requests"
+    cwe_id: CWE-918
+    languages: [python]
+
+  - id: sast/ssrf-fetch
+    name: SSRF (fetch)
+    pattern: 'fetch\s*\([^)]*\+|fetch\s*\(\s*(?:req\.|params|query)'
+    severity: high
+    description: "Potential SSRF via fetch"
+    remediation: "Validate and whitelist URLs"
+    cwe_id: CWE-918
+    languages: [javascript, typescript]
+
+  - id: sast/ssrf-axios
+    name: SSRF (axios)
+    pattern: 'axios\.(?:get|post|put|delete|request)\s*\([^)]*\+'
+    severity: high
+    description: "Potential SSRF via axios"
+    remediation: "Validate and whitelist URLs before making requests"
+    cwe_id: CWE-918
+    languages: [javascript, typescript]
+
+  # ============================================================================
+  # XML EXTERNAL ENTITY - XXE (CWE-611)
+  # ============================================================================
+  - id: sast/xxe-etree
+    name: XXE (ElementTree)
+    pattern: 'xml\.etree\.ElementTree\.(?:parse|fromstring)'
+    severity: high
+    description: "XML parsing may be vulnerable to XXE"
+    remediation: "Use defusedxml library or disable external entities"
+    cwe_id: CWE-611
+    languages: [python]
+
+  - id: sast/xxe-lxml
+    name: XXE (lxml)
+    pattern: 'lxml\.etree\.(?:parse|fromstring)\s*\([^)]*\)'
+    severity: high
+    description: "lxml parsing without disabling external entities"
+    remediation: "Set resolve_entities=False and no_network=True"
+    cwe_id: CWE-611
+    languages: [python]
+
+  - id: sast/xxe-minidom
+    name: XXE (minidom)
+    pattern: 'xml\.dom\.minidom\.(?:parse|parseString)'
+    severity: high
+    description: "DOM parsing may be vulnerable to XXE"
+    remediation: "Use defusedxml library"
+    cwe_id: CWE-611
+    languages: [python]
+
+  - id: sast/xxe-java
+    name: XXE (Java XML)
+    pattern: 'DocumentBuilderFactory\.newInstance\(\)|SAXParserFactory\.newInstance\(\)'
+    severity: high
+    description: "Java XML parser may be vulnerable to XXE"
+    remediation: "Disable external entities in parser configuration"
+    cwe_id: CWE-611
+    languages: [java]
+
+  # ============================================================================
+  # NOSQL INJECTION (CWE-943)
+  # ============================================================================
+  - id: sast/nosql-injection-mongo
+    name: NoSQL Injection (MongoDB)
+    pattern: '(?:find|findOne|update|delete|aggregate)\s*\(\s*\{[^}]*\$(?:where|regex|ne|gt|lt)'
+    severity: high
+    description: "Potential NoSQL injection in MongoDB query"
+    remediation: "Sanitize user input and avoid using $where"
+    cwe_id: CWE-943
+    languages: [javascript, typescript, python]
+
+  - id: sast/nosql-injection-where
+    name: NoSQL Injection ($where operator)
+    pattern: '\$where\s*:\s*["\x27`]'
+    severity: critical
+    description: "$where operator with string can execute JavaScript"
+    remediation: "Avoid $where operator or use strict input validation"
+    cwe_id: CWE-943
+    languages: [javascript, typescript]
+
+  # ============================================================================
+  # OPEN REDIRECT (CWE-601)
+  # ============================================================================
+  - id: sast/open-redirect
+    name: Open Redirect
+    pattern: 'redirect\s*\([^)]*(?:request\.|params\.|query\.|url)'
+    severity: medium
+    description: "Potential open redirect vulnerability"
+    remediation: "Validate redirect URLs against a whitelist"
+    cwe_id: CWE-601
+    languages: [python, javascript, php]
+
+  - id: sast/open-redirect-location
+    name: Open Redirect (Location header)
+    pattern: 'Location\s*:\s*[^"\x27]*(?:\$|request\.|params\.)'
+    severity: medium
+    description: "Dynamic Location header can lead to open redirect"
+    remediation: "Validate redirect destination"
+    cwe_id: CWE-601
+    languages: [python, php]
+
+  # ============================================================================
+  # WEAK CRYPTOGRAPHY (CWE-327)
+  # ============================================================================
   - id: sast/weak-crypto-md5
     name: Weak Cryptography (MD5)
-    pattern: '\bMD5\b|md5\s*\(|hashlib\.md5'
+    pattern: '\bMD5\b|md5\s*\(|hashlib\.md5|createHash\s*\(\s*["\x27]md5'
     severity: medium
     description: "MD5 is cryptographically broken"
     remediation: "Use SHA-256 or stronger hash functions"
@@ -123,58 +404,230 @@ rules:
 
   - id: sast/weak-crypto-sha1
     name: Weak Cryptography (SHA1)
-    pattern: '\bSHA1\b(?!_)|sha1\s*\(|hashlib\.sha1'
+    pattern: '\bSHA1\b(?!_)|sha1\s*\(|hashlib\.sha1|createHash\s*\(\s*["\x27]sha1'
     severity: medium
     description: "SHA1 is cryptographically weak"
     remediation: "Use SHA-256 or stronger hash functions"
     cwe_id: CWE-327
 
+  - id: sast/weak-crypto-des
+    name: Weak Cryptography (DES)
+    pattern: '\b(?:DES|3DES|TripleDES)\b'
+    severity: medium
+    description: "DES/3DES are deprecated encryption algorithms"
+    remediation: "Use AES-256 or stronger encryption"
+    cwe_id: CWE-327
+
+  - id: sast/weak-crypto-ecb
+    name: Weak Cryptography (ECB Mode)
+    pattern: 'MODE_ECB|ECB|\.ecb\('
+    severity: medium
+    description: "ECB mode is insecure for most use cases"
+    remediation: "Use CBC, GCM, or CTR mode"
+    cwe_id: CWE-327
+
   - id: sast/weak-random
     name: Weak Random Number Generator
-    pattern: '\bRandom\(\)|random\.random\(\)|Math\.random\(\)'
+    pattern: '\bRandom\(\)|random\.random\(\)|Math\.random\(\)|rand\s*\('
     severity: medium
     description: "Weak random number generator used for security"
     remediation: "Use cryptographically secure random: secrets module or crypto.randomBytes"
     cwe_id: CWE-330
 
-  # Path Traversal
-  - id: sast/path-traversal
-    name: Path Traversal
-    pattern: 'open\s*\([^)]*\+|os\.path\.join\s*\([^)]*(?:request|input|params)'
+  # ============================================================================
+  # HARDCODED CREDENTIALS (CWE-798)
+  # ============================================================================
+  - id: sast/hardcoded-password
+    name: Hardcoded Password
+    pattern: '(?:password|passwd|pwd|secret)\s*[=:]\s*["\x27][^\$][^"\x27]{8,}'
     severity: high
-    description: "Potential path traversal vulnerability"
-    remediation: "Validate and sanitize file paths, use os.path.realpath"
-    cwe_id: CWE-22
+    description: "Hardcoded password detected"
+    remediation: "Use environment variables or secret management"
+    cwe_id: CWE-798
+    exclude_patterns:
+      - test
+      - example
+      - sample
+      - mock
+
+  - id: sast/hardcoded-api-key
+    name: Hardcoded API Key
+    pattern: '(?:api_key|apikey|api-key)\s*[=:]\s*["\x27][A-Za-z0-9_-]{16,}'
+    severity: high
+    description: "Hardcoded API key detected"
+    remediation: "Use environment variables or secret management"
+    cwe_id: CWE-798
+
+  - id: sast/hardcoded-ip
+    name: Hardcoded IP Address
+    pattern: '\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
+    severity: low
+    description: "Hardcoded IP address found"
+    remediation: "Use configuration or environment variables"
+    cwe_id: CWE-798
+    exclude_patterns:
+      - '127\.0\.0\.1'
+      - '0\.0\.0\.0'
+      - '255\.255\.255\.'
+      - localhost
+
+  # ============================================================================
+  # INSECURE SSL/TLS (CWE-295)
+  # ============================================================================
+  - id: sast/insecure-ssl-verify
+    name: SSL Verification Disabled
+    pattern: 'verify\s*=\s*False|CERT_NONE|ssl_verify\s*=\s*False'
+    severity: high
+    description: "SSL certificate verification disabled"
+    remediation: "Enable SSL verification in production"
+    cwe_id: CWE-295
     languages: [python]
 
-  # Debug Settings
+  - id: sast/insecure-tls-version
+    name: Insecure TLS Version
+    pattern: 'SSLv2|SSLv3|TLSv1_0|TLSv1\.0|TLSv1_1|TLS1\.1'
+    severity: medium
+    description: "Outdated TLS/SSL version in use"
+    remediation: "Use TLS 1.2 or higher"
+    cwe_id: CWE-326
+
+  - id: sast/insecure-https-node
+    name: Insecure HTTPS (Node.js)
+    pattern: 'rejectUnauthorized\s*:\s*false'
+    severity: high
+    description: "Node.js HTTPS verification disabled"
+    remediation: "Enable certificate verification"
+    cwe_id: CWE-295
+    languages: [javascript, typescript]
+
+  # ============================================================================
+  # DEBUG/DEVELOPMENT SETTINGS (CWE-489)
+  # ============================================================================
   - id: sast/debug-enabled
     name: Debug Mode Enabled
-    pattern: 'DEBUG\s*=\s*True|app\.debug\s*=\s*True|FLASK_DEBUG\s*=\s*1'
+    pattern: 'DEBUG\s*=\s*True|app\.debug\s*=\s*True|FLASK_DEBUG\s*=\s*1|NODE_ENV\s*=\s*["\x27]development'
     severity: medium
     description: "Debug mode should not be enabled in production"
     remediation: "Disable debug mode in production environments"
     cwe_id: CWE-489
-    languages: [python]
     exclude_patterns:
       - '\.env\.example'
       - '\.env\.sample'
       - '#.*DEBUG'
 
-  # SSRF
-  - id: sast/ssrf
-    name: Potential SSRF
-    pattern: 'requests\.get\s*\([^)]*(?:request|input|params|url)'
+  - id: sast/verbose-errors
+    name: Verbose Error Messages
+    pattern: 'display_errors\s*=\s*On|error_reporting\s*\(\s*E_ALL\s*\)'
+    severity: medium
+    description: "Verbose error messages can leak information"
+    remediation: "Disable detailed errors in production"
+    cwe_id: CWE-209
+    languages: [php]
+
+  # ============================================================================
+  # AUTHENTICATION/AUTHORIZATION (CWE-287)
+  # ============================================================================
+  - id: sast/jwt-none-algorithm
+    name: JWT None Algorithm
+    pattern: 'algorithm\s*[=:]\s*["\x27]none|algorithms\s*[=:]\s*\[[^\]]*["\x27]none'
+    severity: critical
+    description: "JWT with none algorithm is insecure"
+    remediation: "Use HS256, RS256, or stronger algorithms"
+    cwe_id: CWE-347
+
+  - id: sast/jwt-weak-secret
+    name: JWT Weak Secret
+    pattern: 'jwt\.(?:encode|sign)\s*\([^)]*["\x27](?:secret|password|key)["\x27]'
     severity: high
-    description: "Potential Server-Side Request Forgery"
-    remediation: "Validate and whitelist URLs before making requests"
-    cwe_id: CWE-918
+    description: "JWT with weak/default secret"
+    remediation: "Use strong, random secrets from environment variables"
+    cwe_id: CWE-798
+
+  - id: sast/auth-bypass-comment
+    name: Authentication Bypass (Commented)
+    pattern: '//\s*(?:TODO|FIXME|HACK).*(?:auth|login|verify|check)'
+    severity: medium
+    description: "Potential authentication bypass in commented code"
+    remediation: "Review and remove bypass comments"
+    cwe_id: CWE-287
+
+  # ============================================================================
+  # INSECURE FILE HANDLING (CWE-434)
+  # ============================================================================
+  - id: sast/file-upload-unsafe
+    name: Insecure File Upload
+    pattern: '(?:move_uploaded_file|save_uploaded_file|writeFileSync)\s*\([^)]*\.'
+    severity: high
+    description: "File upload without proper validation"
+    remediation: "Validate file type, size, and sanitize filename"
+    cwe_id: CWE-434
+
+  - id: sast/file-extension-check
+    name: Weak File Extension Check
+    pattern: '\.endswith\s*\(\s*["\x27]\.(?:php|jsp|aspx|py|rb|sh)'
+    severity: medium
+    description: "Extension-only file type validation is insufficient"
+    remediation: "Use magic number validation and whitelist extensions"
+    cwe_id: CWE-434
+
+  # ============================================================================
+  # LOG INJECTION (CWE-117)
+  # ============================================================================
+  - id: sast/log-injection
+    name: Log Injection
+    pattern: '(?:logger|console|log)\.\w+\s*\([^)]*(?:request\.|input|params)'
+    severity: medium
+    description: "Potential log injection via user input"
+    remediation: "Sanitize user input before logging"
+    cwe_id: CWE-117
+
+  # ============================================================================
+  # TEMPLATE INJECTION (CWE-94)
+  # ============================================================================
+  - id: sast/ssti-jinja
+    name: Server-Side Template Injection (Jinja2)
+    pattern: 'render_template_string\s*\([^)]*(?:request\.|input|params)'
+    severity: critical
+    description: "Potential Jinja2 template injection"
+    remediation: "Never render user input as template"
+    cwe_id: CWE-94
     languages: [python]
 
-  # Insecure HTTP
+  - id: sast/ssti-flask
+    name: Server-Side Template Injection (Flask)
+    pattern: 'Template\s*\(\s*(?:request\.|input|params)'
+    severity: critical
+    description: "Potential template injection via dynamic template"
+    remediation: "Use static templates with safe context variables"
+    cwe_id: CWE-94
+    languages: [python]
+
+  # ============================================================================
+  # SECURITY HEADERS (CWE-693)
+  # ============================================================================
+  - id: sast/missing-csrf-protection
+    name: Missing CSRF Protection
+    pattern: 'csrf_protect\s*=\s*False|WTF_CSRF_ENABLED\s*=\s*False'
+    severity: high
+    description: "CSRF protection disabled"
+    remediation: "Enable CSRF protection for state-changing requests"
+    cwe_id: CWE-352
+    languages: [python]
+
+  - id: sast/cors-wildcard
+    name: CORS Wildcard Origin
+    pattern: 'Access-Control-Allow-Origin.*\*|cors\s*\(\s*\*|allow_origins\s*=\s*\[\s*["\x27]\*'
+    severity: medium
+    description: "CORS allows all origins"
+    remediation: "Restrict CORS to specific trusted origins"
+    cwe_id: CWE-942
+
+  # ============================================================================
+  # INSECURE HTTP (CWE-319)
+  # ============================================================================
   - id: sast/insecure-http
     name: Insecure HTTP URL
-    pattern: 'http://(?!localhost|127\.0\.0\.1|0\.0\.0\.0)[^\s"\''"]+'
+    pattern: 'http://(?!localhost|127\.0\.0\.1|0\.0\.0\.0|10\.|192\.168\.|172\.)'
     severity: low
     description: "HTTP URLs should use HTTPS for security"
     remediation: "Use HTTPS instead of HTTP"
@@ -185,8 +638,71 @@ rules:
       - 'http://xmlns'
     confidence: 0.6
 
+  # ============================================================================
+  # MEMORY SAFETY (CWE-119)
+  # ============================================================================
+  - id: sast/buffer-overflow-strcpy
+    name: Buffer Overflow (strcpy)
+    pattern: '\bstrcpy\s*\('
+    severity: high
+    description: "strcpy is vulnerable to buffer overflow"
+    remediation: "Use strncpy or strlcpy with bounds checking"
+    cwe_id: CWE-120
+    languages: [c, cpp]
+
+  - id: sast/buffer-overflow-sprintf
+    name: Buffer Overflow (sprintf)
+    pattern: '\bsprintf\s*\('
+    severity: high
+    description: "sprintf is vulnerable to buffer overflow"
+    remediation: "Use snprintf with size limit"
+    cwe_id: CWE-120
+    languages: [c, cpp]
+
+  - id: sast/buffer-overflow-gets
+    name: Buffer Overflow (gets)
+    pattern: '\bgets\s*\('
+    severity: critical
+    description: "gets() is always unsafe"
+    remediation: "Use fgets() with size limit"
+    cwe_id: CWE-120
+    languages: [c, cpp]
+
+  # ============================================================================
+  # RACE CONDITIONS (CWE-362)
+  # ============================================================================
+  - id: sast/toctou-file
+    name: Race Condition (TOCTOU)
+    pattern: 'os\.path\.exists\s*\([^)]+\).*open\s*\('
+    severity: medium
+    description: "Time-of-check to time-of-use race condition"
+    remediation: "Use file locking or atomic operations"
+    cwe_id: CWE-367
+    languages: [python]
+
+  # ============================================================================
+  # DEPRECATED FUNCTIONS
+  # ============================================================================
+  - id: sast/deprecated-assert
+    name: Deprecated assert() in Production
+    pattern: '\bassert\s*\('
+    severity: low
+    description: "assert statements can be disabled with -O flag"
+    remediation: "Use proper error handling instead of assert"
+    cwe_id: CWE-617
+    languages: [python]
+    exclude_patterns:
+      - test
+      - spec
+
 # Settings
 settings:
   ignore_test_files: true
-  max_file_size_kb: 1000
-
+  max_file_size_kb: 2000
+  exclude_patterns:
+    - '**/test/**'
+    - '**/tests/**'
+    - '**/spec/**'
+    - '**/__tests__/**'
+    - '**/node_modules/**'
+    - '**/vendor/**'
