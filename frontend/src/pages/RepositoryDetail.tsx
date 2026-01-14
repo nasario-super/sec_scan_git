@@ -203,7 +203,7 @@ function FindingRow({ finding, expanded, onToggle, onStatusUpdate }: {
 }
 
 export function RepositoryDetail() {
-  const { repoName } = useParams<{ repoName: string }>();
+  const { owner, repo } = useParams<{ owner: string; repo: string }>();
   const navigate = useNavigate();
   const { addNotification } = useStore();
   
@@ -225,17 +225,16 @@ export function RepositoryDetail() {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
 
-  // Decode repository name (may contain slashes)
-  const decodedRepoName = decodeURIComponent(repoName || '');
-  const [owner, repo] = decodedRepoName.split('/');
+  // Full repository name
+  const fullRepoName = `${owner}/${repo}`;
 
   useEffect(() => {
     fetchStats();
-  }, [decodedRepoName]);
+  }, [fullRepoName]);
 
   useEffect(() => {
     fetchFindings();
-  }, [decodedRepoName, currentPage, severityFilter, typeFilter, categoryFilter]);
+  }, [fullRepoName, currentPage, severityFilter, typeFilter, categoryFilter]);
 
   const fetchStats = async () => {
     if (!owner || !repo) return;
@@ -320,11 +319,11 @@ export function RepositoryDetail() {
 
     setScanning(true);
     try {
-      await api.startRepoScan(decodedRepoName, token, { full_history: false });
+      await api.startRepoScan(fullRepoName, token, { full_history: false });
       addNotification({
         type: 'success',
         title: 'Scan Started',
-        message: `Scanning ${decodedRepoName}...`,
+        message: `Scanning ${fullRepoName}...`,
       });
       // Refresh after delay
       setTimeout(() => {
@@ -347,15 +346,15 @@ export function RepositoryDetail() {
       addNotification({
         type: 'info',
         title: 'Exporting...',
-        message: `Preparing export for ${decodedRepoName}...`,
+        message: `Preparing export for ${fullRepoName}...`,
       });
 
-      const blob = await api.exportFindingsCSV({ repository: decodedRepoName });
+      const blob = await api.exportFindingsCSV({ repository: fullRepoName });
 
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `findings_${decodedRepoName.replace('/', '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+      a.download = `findings_${fullRepoName.replace('/', '_')}_${new Date().toISOString().split('T')[0]}.csv`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -452,7 +451,7 @@ export function RepositoryDetail() {
           <div>
             <div className="flex items-center gap-2">
               <GitBranch className="w-5 h-5 text-neon-blue" />
-              <h1 className="text-2xl font-bold text-gray-100">{decodedRepoName}</h1>
+              <h1 className="text-2xl font-bold text-gray-100">{fullRepoName}</h1>
             </div>
             <p className="text-gray-500 text-sm mt-1">
               {stats.total.toLocaleString()} findings • Last scanned {stats.last_scan_at ? formatDistanceToNow(new Date(stats.last_scan_at), { addSuffix: true }) : 'N/A'}
@@ -461,7 +460,7 @@ export function RepositoryDetail() {
         </div>
         <div className="flex items-center gap-2">
           <a
-            href={`https://github.com/${decodedRepoName}`}
+            href={`https://github.com/${fullRepoName}`}
             target="_blank"
             rel="noopener noreferrer"
             className="btn-ghost flex items-center gap-2"

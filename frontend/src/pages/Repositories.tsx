@@ -55,7 +55,7 @@ function RepositoryCard({ repo, onScan, isScanning }: { repo: Repository; onScan
             <Unlock className="w-4 h-4 text-gray-500" />
           )}
           <Link 
-            to={`/repositories/${encodeURIComponent(repo.full_name)}`}
+            to={`/repositories/${repo.full_name}`}
             className="font-medium text-gray-100 hover:text-neon-blue transition-colors"
           >
             {repo.name}
@@ -68,7 +68,7 @@ function RepositoryCard({ repo, onScan, isScanning }: { repo: Repository; onScan
         </div>
         <div className="flex items-center gap-2">
           <Link
-            to={`/repositories/${encodeURIComponent(repo.full_name)}`}
+            to={`/repositories/${repo.full_name}`}
             className="text-gray-500 hover:text-neon-blue transition-colors"
             title="View Details"
           >

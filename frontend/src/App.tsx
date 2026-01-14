@@ -292,7 +292,7 @@ function AppRoutes() {
         <Route path="findings" element={<Findings />} />
         <Route path="scans" element={<Scans />} />
         <Route path="repositories" element={<Repositories />} />
-        <Route path="repositories/:repoName" element={<RepositoryDetail />} />
+        <Route path="repositories/:owner/:repo" element={<RepositoryDetail />} />
         <Route path="history" element={<History />} />
         <Route path="trends" element={<Trends />} />
         <Route path="security-alerts" element={<SecurityAlerts />} />
