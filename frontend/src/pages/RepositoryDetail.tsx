@@ -203,9 +203,13 @@ function FindingRow({ finding, expanded, onToggle, onStatusUpdate }: {
 }
 
 export function RepositoryDetail() {
-  const { owner, repo } = useParams<{ owner: string; repo: string }>();
+  const params = useParams<{ owner: string; repo: string }>();
+  const { owner, repo } = params;
   const navigate = useNavigate();
   const { addNotification } = useStore();
+  
+  // Debug: Log params to console
+  console.log('RepositoryDetail params:', { owner, repo, fullParams: params });
   
   const [stats, setStats] = useState<RepositoryStats | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);

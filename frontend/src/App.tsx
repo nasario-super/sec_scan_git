@@ -291,10 +291,9 @@ function AppRoutes() {
         <Route index element={<Dashboard />} />
         <Route path="findings" element={<Findings />} />
         <Route path="scans" element={<Scans />} />
-        <Route path="repositories">
-          <Route index element={<Repositories />} />
-          <Route path=":owner/:repo" element={<RepositoryDetail />} />
-        </Route>
+        {/* Repository detail MUST come before repository list */}
+        <Route path="repositories/:owner/:repo" element={<RepositoryDetail />} />
+        <Route path="repositories" element={<Repositories />} />
         <Route path="history" element={<History />} />
         <Route path="trends" element={<Trends />} />
         <Route path="security-alerts" element={<SecurityAlerts />} />
