@@ -4,6 +4,7 @@ import type {
   FindingsFilter,
   PaginatedResponse,
   Repository,
+  RepositoryStats,
   Scan,
   ScansFilter,
   TrendData,
@@ -258,6 +259,33 @@ class ApiService {
     
     const query = params.toString();
     return this.request(`/findings${query ? `?${query}` : ''}`);
+  }
+
+  // Repository Stats
+  async getRepositoryStats(owner: string, repo: string): Promise<RepositoryStats> {
+    return this.request(`/repositories/${owner}/${repo}/stats`);
+  }
+
+  async getRepositoryFindings(
+    owner: string,
+    repo: string,
+    options?: {
+      page?: number;
+      page_size?: number;
+      severity?: string;
+      type?: string;
+      category?: string;
+    }
+  ): Promise<PaginatedResponse<Finding>> {
+    const params = new URLSearchParams();
+    if (options?.page) params.set('page', String(options.page));
+    if (options?.page_size) params.set('page_size', String(options.page_size));
+    if (options?.severity) params.set('severity', options.severity);
+    if (options?.type) params.set('type', options.type);
+    if (options?.category) params.set('category', options.category);
+    
+    const query = params.toString();
+    return this.request(`/repositories/${owner}/${repo}/findings${query ? `?${query}` : ''}`);
   }
 
   async getOpenFindings(): Promise<Finding[]> {

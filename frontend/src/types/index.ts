@@ -150,6 +150,30 @@ export interface PaginatedResponse<T> {
   total_pages: number;
 }
 
+// Repository Statistics (aggregated)
+export interface CategoryCount {
+  category: string;
+  type: string;
+  severity: Severity;
+  count: number;
+}
+
+export interface RepositoryStats {
+  repository: string;
+  total: number;
+  by_severity: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
+  };
+  by_type: Record<string, number>;
+  by_status: Record<string, number>;
+  by_category: CategoryCount[];
+  last_scan_at?: string;
+}
+
 // Filter types
 export interface FindingsFilter {
   severity?: Severity[];

@@ -1004,3 +1004,168 @@ class DatabasePostgres:
                 "open_findings": status_dict.get("open", 0),
                 "fixed_findings": status_dict.get("resolved", 0),
             }
+    
+    def get_repository_stats(self, repository_name: str) -> dict:
+        """Get aggregated statistics for a specific repository."""
+        with self._session() as session:
+            # Get repository
+            repo = session.query(RepositoryModel).filter(
+                RepositoryModel.full_name == repository_name
+            ).first()
+            
+            if not repo:
+                return None
+            
+            # Severity counts
+            severity_counts = (
+                session.query(
+                    FindingModel.severity,
+                    func.count(FindingModel.id).label("count")
+                )
+                .filter(FindingModel.repository_id == repo.id)
+                .group_by(FindingModel.severity)
+                .all()
+            )
+            severity_dict = {row.severity: row.count for row in severity_counts}
+            
+            # Type counts
+            type_counts = (
+                session.query(
+                    FindingModel.finding_type,
+                    func.count(FindingModel.id).label("count")
+                )
+                .filter(FindingModel.repository_id == repo.id)
+                .group_by(FindingModel.finding_type)
+                .all()
+            )
+            type_dict = {row.finding_type: row.count for row in type_counts}
+            
+            # Category counts (more specific - e.g., cielo_merchant_key, aws_access_key)
+            category_counts = (
+                session.query(
+                    FindingModel.category,
+                    FindingModel.finding_type,
+                    FindingModel.severity,
+                    func.count(FindingModel.id).label("count")
+                )
+                .filter(FindingModel.repository_id == repo.id)
+                .group_by(FindingModel.category, FindingModel.finding_type, FindingModel.severity)
+                .order_by(func.count(FindingModel.id).desc())
+                .all()
+            )
+            categories = [
+                {
+                    "category": row.category,
+                    "type": row.finding_type,
+                    "severity": row.severity,
+                    "count": row.count
+                }
+                for row in category_counts
+            ]
+            
+            # Status counts
+            status_counts = (
+                session.query(
+                    FindingModel.status,
+                    func.count(FindingModel.id).label("count")
+                )
+                .filter(FindingModel.repository_id == repo.id)
+                .group_by(FindingModel.status)
+                .all()
+            )
+            status_dict = {row.status: row.count for row in status_counts}
+            
+            # Total
+            total = sum(severity_dict.values())
+            
+            return {
+                "repository": repository_name,
+                "total": total,
+                "by_severity": {
+                    "critical": severity_dict.get("critical", 0),
+                    "high": severity_dict.get("high", 0),
+                    "medium": severity_dict.get("medium", 0),
+                    "low": severity_dict.get("low", 0),
+                    "info": severity_dict.get("info", 0),
+                },
+                "by_type": type_dict,
+                "by_status": status_dict,
+                "by_category": categories,
+                "last_scan_at": repo.updated_at.isoformat() if repo.updated_at else None,
+            }
+    
+    def get_findings_paginated(
+        self,
+        repository: str,
+        page: int = 1,
+        page_size: int = 50,
+        severity: Optional[str] = None,
+        finding_type: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> dict:
+        """Get paginated findings for a repository with filters."""
+        with self._session() as session:
+            # Get repository
+            repo = session.query(RepositoryModel).filter(
+                RepositoryModel.full_name == repository
+            ).first()
+            
+            if not repo:
+                return {"items": [], "total": 0, "page": page, "page_size": page_size}
+            
+            # Base query
+            query = session.query(FindingModel).filter(
+                FindingModel.repository_id == repo.id
+            )
+            
+            # Apply filters
+            if severity:
+                query = query.filter(FindingModel.severity == severity)
+            if finding_type:
+                query = query.filter(FindingModel.finding_type == finding_type)
+            if category:
+                query = query.filter(FindingModel.category == category)
+            
+            # Get total count
+            total = query.count()
+            
+            # Order and paginate
+            query = query.order_by(
+                case(
+                    (FindingModel.severity == "critical", 1),
+                    (FindingModel.severity == "high", 2),
+                    (FindingModel.severity == "medium", 3),
+                    else_=4,
+                )
+            ).offset((page - 1) * page_size).limit(page_size)
+            
+            findings = query.all()
+            
+            return {
+                "items": [
+                    {
+                        "id": str(f.id),
+                        "scan_id": str(f.scan_id) if f.scan_id else None,
+                        "repository": repository,
+                        "type": f.finding_type,
+                        "category": f.category,
+                        "severity": f.severity,
+                        "remediation_status": f.status,
+                        "file_path": f.file_path,
+                        "line_number": f.line_number,
+                        "line_content": f.line_content,
+                        "branch": f.branch,
+                        "rule_id": f.rule_id,
+                        "rule_description": f.rule_description,
+                        "matched_pattern": f.matched_pattern,
+                        "false_positive_likelihood": f.false_positive_likelihood,
+                        "created_at": f.created_at.isoformat() if f.created_at else None,
+                        "updated_at": f.updated_at.isoformat() if f.updated_at else None,
+                    }
+                    for f in findings
+                ],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total + page_size - 1) // page_size,
+            }

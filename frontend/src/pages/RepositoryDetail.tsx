@@ -17,11 +17,13 @@ import {
   ShieldAlert,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   FileCode,
   Copy,
   Eye,
   XCircle,
   Filter,
+  Loader2,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
@@ -40,7 +42,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { SeverityBadge } from '../components/ui/SeverityBadge';
 import { useStore } from '../stores/useStore';
 import api from '../services/api';
-import type { Finding, Severity, FindingType, RemediationStatus } from '../types';
+import type { Finding, Severity, FindingType, RemediationStatus, RepositoryStats, CategoryCount } from '../types';
 
 const SEVERITY_COLORS: Record<Severity, string> = {
   critical: '#ff1744',
@@ -66,17 +68,6 @@ const statusConfig: Record<RemediationStatus, { label: string; icon: React.Eleme
   false_positive: { label: 'False Positive', icon: XCircle, color: 'text-gray-500' },
   accepted_risk: { label: 'Accepted Risk', icon: Eye, color: 'text-neon-purple' },
 };
-
-interface RepositoryStats {
-  total: number;
-  critical: number;
-  high: number;
-  medium: number;
-  low: number;
-  info: number;
-  by_type: Record<string, number>;
-  by_status: Record<string, number>;
-}
 
 function FindingRow({ finding, expanded, onToggle, onStatusUpdate }: {
   finding: Finding;
@@ -216,30 +207,83 @@ export function RepositoryDetail() {
   const navigate = useNavigate();
   const { addNotification } = useStore();
   
+  const [stats, setStats] = useState<RepositoryStats | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [loading, setLoading] = useState(true);
+  const [findingsLoading, setFindingsLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<'all' | Severity | FindingType>('all');
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalFindings, setTotalFindings] = useState(0);
+  const pageSize = 50;
+  
+  // Filter state
+  const [severityFilter, setSeverityFilter] = useState<Severity | null>(null);
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
 
   // Decode repository name (may contain slashes)
   const decodedRepoName = decodeURIComponent(repoName || '');
+  const [owner, repo] = decodedRepoName.split('/');
+
+  useEffect(() => {
+    fetchStats();
+  }, [decodedRepoName]);
 
   useEffect(() => {
     fetchFindings();
-  }, [decodedRepoName]);
+  }, [decodedRepoName, currentPage, severityFilter, typeFilter, categoryFilter]);
 
-  const fetchFindings = async () => {
+  const fetchStats = async () => {
+    if (!owner || !repo) return;
     try {
       setLoading(true);
-      const response = await api.getFindings({ repository: decodedRepoName });
-      const items = Array.isArray(response) ? response : (response?.items || []);
+      const data = await api.getRepositoryStats(owner, repo);
+      setStats(data);
+    } catch (error) {
+      console.error('Failed to fetch repository stats:', error);
+      addNotification({
+        type: 'error',
+        title: 'Error',
+        message: 'Failed to load repository statistics',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchFindings = async () => {
+    if (!owner || !repo) return;
+    try {
+      setFindingsLoading(true);
+      const response = await api.getRepositoryFindings(owner, repo, {
+        page: currentPage,
+        page_size: pageSize,
+        severity: severityFilter || undefined,
+        type: typeFilter || undefined,
+        category: categoryFilter || undefined,
+      });
+      
+      // Map response to Finding type
+      const items = (response.items || []).map((f: any) => ({
+        ...f,
+        severity: f.severity as Severity,
+        type: f.type as FindingType,
+        remediation_status: f.remediation_status as RemediationStatus,
+        states: f.states || [],
+      }));
+      
       setFindings(items);
+      setTotalPages(response.total_pages || 1);
+      setTotalFindings(response.total || 0);
     } catch (error) {
       console.error('Failed to fetch findings:', error);
       setFindings([]);
     } finally {
-      setLoading(false);
+      setFindingsLoading(false);
     }
   };
 
@@ -283,7 +327,10 @@ export function RepositoryDetail() {
         message: `Scanning ${decodedRepoName}...`,
       });
       // Refresh after delay
-      setTimeout(fetchFindings, 5000);
+      setTimeout(() => {
+        fetchStats();
+        fetchFindings();
+      }, 5000);
     } catch (error) {
       addNotification({
         type: 'error',
@@ -317,7 +364,7 @@ export function RepositoryDetail() {
       addNotification({
         type: 'success',
         title: 'Export Complete',
-        message: `Exported ${filteredFindings.length} findings`,
+        message: `Exported ${stats?.total || 0} findings`,
       });
     } catch (error) {
       addNotification({
@@ -328,46 +375,43 @@ export function RepositoryDetail() {
     }
   };
 
-  // Calculate stats
-  const stats: RepositoryStats = {
-    total: findings.length,
-    critical: findings.filter(f => f.severity === 'critical').length,
-    high: findings.filter(f => f.severity === 'high').length,
-    medium: findings.filter(f => f.severity === 'medium').length,
-    low: findings.filter(f => f.severity === 'low').length,
-    info: findings.filter(f => f.severity === 'info').length,
-    by_type: {},
-    by_status: {},
+  const handleSeverityFilter = (sev: Severity | null) => {
+    setSeverityFilter(severityFilter === sev ? null : sev);
+    setCurrentPage(1);
   };
 
-  // Count by type
-  findings.forEach(f => {
-    stats.by_type[f.type] = (stats.by_type[f.type] || 0) + 1;
-    stats.by_status[f.remediation_status] = (stats.by_status[f.remediation_status] || 0) + 1;
-  });
+  const handleTypeFilter = (type: string | null) => {
+    setTypeFilter(typeFilter === type ? null : type);
+    setCategoryFilter(null); // Reset category filter when type changes
+    setCurrentPage(1);
+  };
 
-  // Filter findings
-  const filteredFindings = findings.filter(f => {
-    if (activeFilter === 'all') return true;
-    if (['critical', 'high', 'medium', 'low', 'info'].includes(activeFilter)) {
-      return f.severity === activeFilter;
-    }
-    return f.type === activeFilter;
-  });
+  // Note: Category filter is set directly from category buttons in categoriesByType section
 
   // Charts data
-  const severityChartData = [
-    { name: 'Critical', value: stats.critical, color: SEVERITY_COLORS.critical },
-    { name: 'High', value: stats.high, color: SEVERITY_COLORS.high },
-    { name: 'Medium', value: stats.medium, color: SEVERITY_COLORS.medium },
-    { name: 'Low', value: stats.low, color: SEVERITY_COLORS.low },
-    { name: 'Info', value: stats.info, color: SEVERITY_COLORS.info },
-  ].filter(d => d.value > 0);
+  const severityChartData = stats ? [
+    { name: 'Critical', value: stats.by_severity.critical, color: SEVERITY_COLORS.critical },
+    { name: 'High', value: stats.by_severity.high, color: SEVERITY_COLORS.high },
+    { name: 'Medium', value: stats.by_severity.medium, color: SEVERITY_COLORS.medium },
+    { name: 'Low', value: stats.by_severity.low, color: SEVERITY_COLORS.low },
+    { name: 'Info', value: stats.by_severity.info, color: SEVERITY_COLORS.info },
+  ].filter(d => d.value > 0) : [];
 
-  const typeChartData = Object.entries(stats.by_type).map(([type, count]) => ({
+  const typeChartData = stats ? Object.entries(stats.by_type).map(([type, count]) => ({
     name: TYPE_CONFIG[type]?.label || type,
     value: count,
-  }));
+  })) : [];
+
+  // Group categories by type for display
+  const categoriesByType: Record<string, CategoryCount[]> = {};
+  if (stats?.by_category) {
+    stats.by_category.forEach(cat => {
+      if (!categoriesByType[cat.type]) {
+        categoriesByType[cat.type] = [];
+      }
+      categoriesByType[cat.type].push(cat);
+    });
+  }
 
   if (loading) {
     return (
@@ -375,6 +419,20 @@ export function RepositoryDetail() {
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-neon-blue border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-400">Loading repository data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!stats) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <AlertTriangle className="w-12 h-12 text-neon-yellow mx-auto mb-4" />
+          <p className="text-gray-400">Repository not found or no data available</p>
+          <button onClick={() => navigate('/repositories')} className="btn-ghost mt-4">
+            Back to Repositories
+          </button>
         </div>
       </div>
     );
@@ -397,7 +455,7 @@ export function RepositoryDetail() {
               <h1 className="text-2xl font-bold text-gray-100">{decodedRepoName}</h1>
             </div>
             <p className="text-gray-500 text-sm mt-1">
-              {stats.total} findings • Last scanned {findings[0]?.updated_at ? formatDistanceToNow(new Date(findings[0].updated_at), { addSuffix: true }) : 'N/A'}
+              {stats.total.toLocaleString()} findings • Last scanned {stats.last_scan_at ? formatDistanceToNow(new Date(stats.last_scan_at), { addSuffix: true }) : 'N/A'}
             </p>
           </div>
         </div>
@@ -422,7 +480,7 @@ export function RepositoryDetail() {
           <button
             onClick={handleExportCSV}
             className="btn-primary flex items-center gap-2"
-            disabled={findings.length === 0}
+            disabled={stats.total === 0}
           >
             <Download className="w-4 h-4" />
             Export CSV
@@ -430,66 +488,78 @@ export function RepositoryDetail() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      {/* Stats Cards - Clickable */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         <button
-          onClick={() => setActiveFilter('critical')}
+          onClick={() => handleSeverityFilter('critical')}
           className={clsx(
-            'p-4 rounded-lg border transition-all',
-            activeFilter === 'critical'
+            'p-4 rounded-lg border transition-all text-left',
+            severityFilter === 'critical'
               ? 'bg-neon-red/20 border-neon-red'
               : 'bg-cyber-surface border-cyber-border hover:border-neon-red/50'
           )}
         >
-          <p className="text-2xl font-bold text-neon-red">{stats.critical}</p>
+          <p className="text-2xl font-bold text-neon-red">{stats.by_severity.critical.toLocaleString()}</p>
           <p className="text-sm text-gray-400">Critical</p>
         </button>
         <button
-          onClick={() => setActiveFilter('high')}
+          onClick={() => handleSeverityFilter('high')}
           className={clsx(
-            'p-4 rounded-lg border transition-all',
-            activeFilter === 'high'
+            'p-4 rounded-lg border transition-all text-left',
+            severityFilter === 'high'
               ? 'bg-orange-500/20 border-orange-500'
               : 'bg-cyber-surface border-cyber-border hover:border-orange-500/50'
           )}
         >
-          <p className="text-2xl font-bold text-orange-500">{stats.high}</p>
+          <p className="text-2xl font-bold text-orange-500">{stats.by_severity.high.toLocaleString()}</p>
           <p className="text-sm text-gray-400">High</p>
         </button>
         <button
-          onClick={() => setActiveFilter('medium')}
+          onClick={() => handleSeverityFilter('medium')}
           className={clsx(
-            'p-4 rounded-lg border transition-all',
-            activeFilter === 'medium'
+            'p-4 rounded-lg border transition-all text-left',
+            severityFilter === 'medium'
               ? 'bg-neon-yellow/20 border-neon-yellow'
               : 'bg-cyber-surface border-cyber-border hover:border-neon-yellow/50'
           )}
         >
-          <p className="text-2xl font-bold text-neon-yellow">{stats.medium}</p>
+          <p className="text-2xl font-bold text-neon-yellow">{stats.by_severity.medium.toLocaleString()}</p>
           <p className="text-sm text-gray-400">Medium</p>
         </button>
         <button
-          onClick={() => setActiveFilter('low')}
+          onClick={() => handleSeverityFilter('low')}
           className={clsx(
-            'p-4 rounded-lg border transition-all',
-            activeFilter === 'low'
+            'p-4 rounded-lg border transition-all text-left',
+            severityFilter === 'low'
               ? 'bg-neon-green/20 border-neon-green'
               : 'bg-cyber-surface border-cyber-border hover:border-neon-green/50'
           )}
         >
-          <p className="text-2xl font-bold text-neon-green">{stats.low}</p>
+          <p className="text-2xl font-bold text-neon-green">{stats.by_severity.low.toLocaleString()}</p>
           <p className="text-sm text-gray-400">Low</p>
         </button>
         <button
-          onClick={() => setActiveFilter('all')}
+          onClick={() => handleSeverityFilter('info')}
           className={clsx(
-            'p-4 rounded-lg border transition-all',
-            activeFilter === 'all'
+            'p-4 rounded-lg border transition-all text-left',
+            severityFilter === 'info'
               ? 'bg-neon-blue/20 border-neon-blue'
               : 'bg-cyber-surface border-cyber-border hover:border-neon-blue/50'
           )}
         >
-          <p className="text-2xl font-bold text-neon-blue">{stats.total}</p>
+          <p className="text-2xl font-bold text-neon-blue">{stats.by_severity.info.toLocaleString()}</p>
+          <p className="text-sm text-gray-400">Info</p>
+        </button>
+        <button
+          onClick={() => handleSeverityFilter(null)}
+          className={clsx(
+            'p-4 rounded-lg border transition-all text-left',
+            !severityFilter
+              ? 'bg-neon-purple/20 border-neon-purple'
+              : 'bg-cyber-surface border-cyber-border hover:border-neon-purple/50'
+          )}
+        >
+          <p className="text-2xl font-bold text-neon-purple">{stats.total.toLocaleString()}</p>
           <p className="text-sm text-gray-400">Total</p>
         </button>
       </div>
@@ -525,6 +595,7 @@ export function RepositoryDetail() {
                       border: '1px solid #2d3748',
                       borderRadius: '8px',
                     }}
+                    formatter={(value) => typeof value === 'number' ? value.toLocaleString() : value}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -532,7 +603,7 @@ export function RepositoryDetail() {
                 {severityChartData.map((entry) => (
                   <div key={entry.name} className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
-                    <span className="text-sm text-gray-400">{entry.name}: {entry.value}</span>
+                    <span className="text-sm text-gray-400">{entry.name}: {entry.value.toLocaleString()}</span>
                   </div>
                 ))}
               </div>
@@ -555,7 +626,7 @@ export function RepositoryDetail() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={typeChartData} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" horizontal={false} />
-                  <XAxis type="number" stroke="#6b7280" fontSize={12} />
+                  <XAxis type="number" stroke="#6b7280" fontSize={12} tickFormatter={(v) => v.toLocaleString()} />
                   <YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={12} width={80} />
                   <Tooltip
                     contentStyle={{
@@ -563,6 +634,7 @@ export function RepositoryDetail() {
                       border: '1px solid #2d3748',
                       borderRadius: '8px',
                     }}
+                    formatter={(value) => typeof value === 'number' ? value.toLocaleString() : value}
                   />
                   <Bar dataKey="value" fill="#00d4ff" radius={[0, 4, 4, 0]} />
                 </BarChart>
@@ -576,31 +648,100 @@ export function RepositoryDetail() {
         </div>
       </div>
 
+      {/* Category Breakdown by Type */}
+      <div className="card-glow">
+        <h3 className="section-title mb-4">
+          <Key className="w-5 h-5 text-neon-blue" />
+          Top Vulnerability Categories
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Object.entries(categoriesByType).map(([type, categories]) => {
+            const config = TYPE_CONFIG[type] || { label: type, icon: Code, color: 'text-gray-400' };
+            const Icon = config.icon;
+            // Show top 10 categories per type
+            const topCategories = categories.slice(0, 10);
+            
+            return (
+              <div key={type} className="p-4 rounded-lg bg-cyber-surface/50 border border-cyber-border">
+                <div className="flex items-center gap-2 mb-3">
+                  <Icon className={clsx('w-5 h-5', config.color)} />
+                  <h4 className="font-medium text-gray-200">{config.label}</h4>
+                  <span className="text-xs text-gray-500 ml-auto">
+                    {categories.reduce((sum, c) => sum + c.count, 0).toLocaleString()} total
+                  </span>
+                </div>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {topCategories.map((cat, idx) => (
+                    <button
+                      key={`${cat.category}-${idx}`}
+                      onClick={() => {
+                        setTypeFilter(type);
+                        setCategoryFilter(cat.category);
+                        setCurrentPage(1);
+                      }}
+                      className={clsx(
+                        'w-full flex items-center justify-between p-2 rounded text-left text-sm transition-colors',
+                        categoryFilter === cat.category
+                          ? 'bg-neon-blue/20 text-neon-blue'
+                          : 'hover:bg-cyber-darker text-gray-300'
+                      )}
+                    >
+                      <span className="truncate">{cat.category}</span>
+                      <span className="flex items-center gap-2 ml-2">
+                        <SeverityBadge severity={cat.severity} />
+                        <span className="font-mono">{cat.count.toLocaleString()}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Type Filter Buttons */}
       <div className="card">
         <div className="flex items-center gap-2 flex-wrap">
           <Filter className="w-4 h-4 text-gray-500" />
           <span className="text-sm text-gray-400 mr-2">Filter by type:</span>
-          {Object.entries(TYPE_CONFIG).map(([type, config]) => {
-            const count = stats.by_type[type] || 0;
+          <button
+            onClick={() => handleTypeFilter(null)}
+            className={clsx(
+              'px-3 py-1 rounded-md border transition-colors text-sm',
+              !typeFilter
+                ? 'bg-neon-blue/20 border-neon-blue text-neon-blue'
+                : 'border-cyber-border text-gray-400 hover:border-gray-500'
+            )}
+          >
+            All Types
+          </button>
+          {Object.entries(stats.by_type).map(([type, count]) => {
             if (count === 0) return null;
+            const config = TYPE_CONFIG[type] || { label: type, icon: Code, color: 'text-gray-400' };
             const Icon = config.icon;
             return (
               <button
                 key={type}
-                onClick={() => setActiveFilter(activeFilter === type ? 'all' : type as FindingType)}
+                onClick={() => handleTypeFilter(type)}
                 className={clsx(
                   'flex items-center gap-2 px-3 py-1 rounded-md border transition-colors text-sm',
-                  activeFilter === type
+                  typeFilter === type
                     ? 'bg-neon-blue/20 border-neon-blue text-neon-blue'
                     : 'border-cyber-border text-gray-400 hover:border-gray-500'
                 )}
               >
                 <Icon className={clsx('w-4 h-4', config.color)} />
-                {config.label} ({count})
+                {config.label} ({count.toLocaleString()})
               </button>
             );
           })}
+          {categoryFilter && (
+            <span className="text-sm text-gray-500 ml-4">
+              Category: <span className="text-neon-blue">{categoryFilter}</span>
+              <button onClick={() => setCategoryFilter(null)} className="ml-2 text-gray-400 hover:text-gray-200">✕</button>
+            </span>
+          )}
         </div>
       </div>
 
@@ -608,9 +749,12 @@ export function RepositoryDetail() {
       <div className="card p-0 overflow-hidden">
         <div className="p-4 border-b border-cyber-border flex items-center justify-between">
           <h3 className="text-lg font-semibold text-gray-100">
-            {activeFilter === 'all' ? 'All Findings' : `${activeFilter.charAt(0).toUpperCase() + activeFilter.slice(1)} Findings`}
-            <span className="text-gray-500 font-normal ml-2">({filteredFindings.length})</span>
+            Findings
+            <span className="text-gray-500 font-normal ml-2">
+              (Showing {findings.length} of {totalFindings.toLocaleString()})
+            </span>
           </h3>
+          {findingsLoading && <Loader2 className="w-5 h-5 text-neon-blue animate-spin" />}
         </div>
         <table className="w-full">
           <thead>
@@ -623,7 +767,7 @@ export function RepositoryDetail() {
             </tr>
           </thead>
           <tbody>
-            {filteredFindings.map((finding) => (
+            {findings.map((finding) => (
               <FindingRow
                 key={finding.id}
                 finding={finding}
@@ -635,20 +779,76 @@ export function RepositoryDetail() {
           </tbody>
         </table>
 
-        {filteredFindings.length === 0 && (
+        {findings.length === 0 && !findingsLoading && (
           <div className="p-12 text-center">
             <CheckCircle className="w-12 h-12 text-neon-green mx-auto mb-4" />
             <p className="text-gray-400">
-              {findings.length === 0 
+              {stats.total === 0 
                 ? 'No findings detected in this repository'
-                : 'No findings match the selected filter'}
+                : 'No findings match the selected filters'}
             </p>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="p-4 border-t border-cyber-border flex items-center justify-between">
+            <p className="text-sm text-gray-500">
+              Page {currentPage} of {totalPages} ({totalFindings.toLocaleString()} total)
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="btn-ghost p-2 disabled:opacity-50"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              
+              {/* Page numbers */}
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={clsx(
+                        'w-8 h-8 rounded text-sm transition-colors',
+                        currentPage === pageNum
+                          ? 'bg-neon-blue text-white'
+                          : 'text-gray-400 hover:bg-cyber-surface'
+                      )}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="btn-ghost p-2 disabled:opacity-50"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
       </div>
 
       {/* Status Summary */}
-      {findings.length > 0 && (
+      {stats.total > 0 && (
         <div className="card">
           <h3 className="section-title mb-4">
             <CheckCircle className="w-5 h-5 text-neon-blue" />
@@ -663,7 +863,7 @@ export function RepositoryDetail() {
                 <div key={status} className="flex items-center gap-3 p-3 rounded-lg bg-cyber-surface/50 border border-cyber-border/50">
                   <Icon className={clsx('w-5 h-5', config.color)} />
                   <div>
-                    <p className="text-lg font-bold text-gray-100">{count}</p>
+                    <p className="text-lg font-bold text-gray-100">{count.toLocaleString()}</p>
                     <p className="text-xs text-gray-500">{config.label}</p>
                   </div>
                 </div>

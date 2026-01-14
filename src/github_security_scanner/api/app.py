@@ -1050,6 +1050,53 @@ async def list_repositories(
     return repos
 
 
+@app.get("/api/repositories/{repo_owner}/{repo_name}/stats", tags=["Repositories"])
+async def get_repository_stats(repo_owner: str, repo_name: str):
+    """
+    Get aggregated statistics for a specific repository.
+    
+    Returns severity counts, type counts, category breakdown, and status distribution.
+    Uses optimized SQL queries to aggregate data without loading all findings.
+    """
+    full_name = f"{repo_owner}/{repo_name}"
+    stats = db.get_repository_stats(full_name)
+    
+    if not stats:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    
+    return stats
+
+
+@app.get("/api/repositories/{repo_owner}/{repo_name}/findings", tags=["Repositories"])
+async def get_repository_findings(
+    repo_owner: str,
+    repo_name: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    severity: Optional[str] = None,
+    type: Optional[str] = None,
+    category: Optional[str] = None,
+):
+    """
+    Get paginated findings for a specific repository.
+    
+    Supports filtering by severity, type, and category.
+    Returns paginated results with total count for navigation.
+    """
+    full_name = f"{repo_owner}/{repo_name}"
+    
+    result = db.get_findings_paginated(
+        repository=full_name,
+        page=page,
+        page_size=page_size,
+        severity=severity,
+        finding_type=type,
+        category=category,
+    )
+    
+    return result
+
+
 @app.get("/api/history", tags=["History"])
 async def get_activity_history(
     organization: Optional[str] = None,
