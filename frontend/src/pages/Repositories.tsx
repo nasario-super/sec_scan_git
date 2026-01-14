@@ -32,7 +32,7 @@ const languageColors: Record<string, string> = {
   Markdown: 'bg-gray-500',
 };
 
-function RepositoryCard({ repo, onScan }: { repo: Repository; onScan: () => void }) {
+function RepositoryCard({ repo, onScan, isScanning }: { repo: Repository; onScan: () => void; isScanning?: boolean }) {
   const hasCritical = repo.findings_count.critical > 0;
   const hasHigh = repo.findings_count.high > 0;
   const isClean = repo.findings_count.total === 0;
@@ -137,11 +137,20 @@ function RepositoryCard({ repo, onScan }: { repo: Repository; onScan: () => void
         </div>
         <button
           onClick={onScan}
-          disabled={repo.is_archived}
+          disabled={repo.is_archived || isScanning}
           className="btn-ghost text-sm flex items-center gap-1 disabled:opacity-50"
         >
-          <ScanLine className="w-4 h-4" />
-          Scan
+          {isScanning ? (
+            <>
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              Scanning...
+            </>
+          ) : (
+            <>
+              <ScanLine className="w-4 h-4" />
+              Scan
+            </>
+          )}
         </button>
       </div>
     </div>
@@ -154,21 +163,24 @@ export function Repositories() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [sortBy, setSortBy] = useState<'findings' | 'name' | 'recent'>('findings');
+  const [scanningRepo, setScanningRepo] = useState<string | null>(null);
+  const [scanMessage, setScanMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const fetchRepositories = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getRepositories();
+      // API returns array directly
+      setRepositories(data || []);
+    } catch (error) {
+      console.error('Failed to fetch repositories:', error);
+      setRepositories([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchRepositories = async () => {
-      try {
-        const data = await api.getRepositories();
-        // API returns array directly
-        setRepositories(data || []);
-      } catch (error) {
-        console.error('Failed to fetch repositories:', error);
-        setRepositories([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchRepositories();
   }, []);
 
@@ -178,15 +190,30 @@ export function Repositories() {
     const token = stored ? JSON.parse(stored)?.state?.scanSettings?.githubToken : '';
     
     if (!token) {
-      console.error('No GitHub token configured. Please go to Settings.');
-      alert('Please configure your GitHub token in Settings first.');
+      setScanMessage({ type: 'error', text: '⚠️ Configure seu GitHub token em Settings primeiro.' });
+      setTimeout(() => setScanMessage(null), 5000);
       return;
     }
     
+    setScanningRepo(repoFullName);
+    setScanMessage(null);
+    
     try {
-      await api.startRepoScan(repoFullName, token);
-    } catch (error) {
+      const result = await api.startRepoScan(repoFullName, token);
+      setScanMessage({ 
+        type: 'success', 
+        text: `✅ Scan iniciado para ${repoFullName}! ID: ${result.scan_id}. Vá para Scans para acompanhar.` 
+      });
+      setTimeout(() => setScanMessage(null), 8000);
+    } catch (error: any) {
       console.error('Failed to start scan:', error);
+      setScanMessage({ 
+        type: 'error', 
+        text: `❌ Erro ao iniciar scan: ${error.message || 'Erro desconhecido'}` 
+      });
+      setTimeout(() => setScanMessage(null), 5000);
+    } finally {
+      setScanningRepo(null);
     }
   };
 
@@ -244,6 +271,18 @@ export function Repositories() {
 
   return (
     <div className="space-y-6">
+      {/* Scan Message */}
+      {scanMessage && (
+        <div className={clsx(
+          'p-4 rounded-lg border',
+          scanMessage.type === 'success' 
+            ? 'bg-neon-green/10 border-neon-green/30 text-neon-green'
+            : 'bg-severity-critical/10 border-severity-critical/30 text-severity-critical'
+        )}>
+          {scanMessage.text}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -252,7 +291,7 @@ export function Repositories() {
             {stats.total.toLocaleString()} repositories • {stats.totalFindings.toLocaleString()} findings • {stats.withIssues} with issues • {stats.clean} clean
           </p>
         </div>
-        <button className="btn-ghost flex items-center gap-2">
+        <button className="btn-ghost flex items-center gap-2" onClick={fetchRepositories}>
           <RefreshCw className="w-4 h-4" />
           Sync from GitHub
         </button>
@@ -361,6 +400,7 @@ export function Repositories() {
             key={repo.id}
             repo={repo}
             onScan={() => handleScan(repo.full_name)}
+            isScanning={scanningRepo === repo.full_name}
           />
         ))}
       </div>
