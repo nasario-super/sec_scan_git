@@ -9,6 +9,12 @@ import {
   Activity,
   Clock,
   ArrowRight,
+  Key,
+  Bug,
+  Code,
+  Cloud,
+  History,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -64,30 +70,50 @@ const SEVERITY_COLORS = {
   info: '#2196f3',
 };
 
+const TYPE_COLORS: Record<string, string> = {
+  secret: '#ff1744',
+  vulnerability: '#ff5722',
+  sast: '#9c27b0',
+  iac: '#00d4ff',
+  history: '#6b7280',
+  bug: '#ff9800',
+};
+
+const TYPE_CONFIG: Record<string, { label: string; icon: React.ElementType; color: string }> = {
+  secret: { label: 'Secrets', icon: Key, color: 'text-neon-red' },
+  vulnerability: { label: 'CVEs', icon: ShieldAlert, color: 'text-neon-orange' },
+  sast: { label: 'SAST', icon: Code, color: 'text-neon-purple' },
+  iac: { label: 'IaC', icon: Cloud, color: 'text-neon-blue' },
+  history: { label: 'History', icon: History, color: 'text-gray-400' },
+  bug: { label: 'Bugs', icon: Bug, color: 'text-neon-yellow' },
+};
+
 interface StatCardProps {
   title: string;
   value: number | string;
   change?: number;
   icon: React.ElementType;
-  color: 'blue' | 'green' | 'red' | 'yellow' | 'purple';
+  color: 'blue' | 'green' | 'red' | 'yellow' | 'purple' | 'orange';
   trend?: 'up' | 'down';
+  link?: string;
 }
 
-function StatCard({ title, value, change, icon: Icon, color, trend }: StatCardProps) {
+function StatCard({ title, value, change, icon: Icon, color, trend, link }: StatCardProps) {
   const colorClasses = {
     blue: 'text-neon-blue border-neon-blue/30 bg-neon-blue/5',
     green: 'text-neon-green border-neon-green/30 bg-neon-green/5',
     red: 'text-neon-red border-neon-red/30 bg-neon-red/5',
     yellow: 'text-neon-yellow border-neon-yellow/30 bg-neon-yellow/5',
     purple: 'text-neon-purple border-neon-purple/30 bg-neon-purple/5',
+    orange: 'text-orange-500 border-orange-500/30 bg-orange-500/5',
   };
 
-  return (
-    <div className="stat-card animate-fadeIn">
+  const content = (
+    <div className="stat-card animate-fadeIn hover:border-neon-blue/50 transition-all cursor-pointer">
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm text-gray-500 mb-1">{title}</p>
-          <p className="text-3xl font-bold text-gray-100 font-mono">{value}</p>
+          <p className="text-3xl font-bold text-gray-100 font-mono">{typeof value === 'number' ? value.toLocaleString() : value}</p>
           {change !== undefined && (
             <div className={clsx(
               'flex items-center gap-1 mt-2 text-sm',
@@ -107,6 +133,11 @@ function StatCard({ title, value, change, icon: Icon, color, trend }: StatCardPr
       </div>
     </div>
   );
+
+  if (link) {
+    return <Link to={link}>{content}</Link>;
+  }
+  return content;
 }
 
 function SeverityChart({ data }: { data: Record<Severity, number> }) {
@@ -150,11 +181,63 @@ function SeverityChart({ data }: { data: Record<Severity, number> }) {
               style={{ backgroundColor: entry.color }}
             />
             <span className="text-sm text-gray-400">
-              {entry.name}: {entry.value}
+              {entry.name}: {entry.value.toLocaleString()}
             </span>
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function TypeDistributionChart({ data }: { data: Record<string, number> }) {
+  const chartData = Object.entries(data)
+    .filter(([, value]) => value > 0)
+    .map(([name, value]) => ({
+      name: TYPE_CONFIG[name]?.label || name,
+      value,
+      color: TYPE_COLORS[name] || '#6b7280',
+    }));
+
+  if (chartData.length === 0) {
+    return (
+      <div className="h-64 flex items-center justify-center text-gray-500">
+        <div className="text-center">
+          <Code className="w-8 h-8 mx-auto mb-2 opacity-50" />
+          <p>No findings data</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-64">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={chartData} layout="vertical">
+          <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" horizontal={false} />
+          <XAxis type="number" stroke="#6b7280" fontSize={12} />
+          <YAxis
+            type="category"
+            dataKey="name"
+            stroke="#6b7280"
+            fontSize={12}
+            width={100}
+            tick={{ fill: '#9ca3af' }}
+          />
+          <Tooltip
+            contentStyle={{
+              backgroundColor: '#1a2234',
+              border: '1px solid #2d3748',
+              borderRadius: '8px',
+            }}
+          />
+          <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+            {chartData.map((entry, index) => (
+              <Cell key={`cell-${index}`} fill={entry.color} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -244,6 +327,35 @@ function TopRepositoriesChart({ data }: { data: Array<{ name: string; findings_c
   );
 }
 
+// Type stat card component
+function TypeStatCard({ type, count, total }: { type: string; count: number; total: number }) {
+  const config = TYPE_CONFIG[type];
+  if (!config || count === 0) return null;
+  
+  const Icon = config.icon;
+  const percentage = total > 0 ? Math.round((count / total) * 100) : 0;
+
+  return (
+    <Link 
+      to={`/findings?type=${type}`}
+      className="flex items-center gap-3 p-3 rounded-lg bg-cyber-surface/50 border border-cyber-border/50 
+                 hover:border-neon-blue/30 transition-all group"
+    >
+      <div className={clsx('p-2 rounded-lg bg-cyber-darker', config.color)}>
+        <Icon className="w-5 h-5" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-gray-200">{config.label}</p>
+        <p className="text-xs text-gray-500">{percentage}% of total</p>
+      </div>
+      <div className="text-right">
+        <p className="text-lg font-bold text-gray-100">{count.toLocaleString()}</p>
+      </div>
+      <ArrowRight className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+    </Link>
+  );
+}
+
 // Default empty severity for safety
 const defaultSeverity = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
 const defaultFindingTypes = { secret: 0, vulnerability: 0, sast: 0, iac: 0, history: 0 };
@@ -289,7 +401,9 @@ export function Dashboard() {
   }, []);
 
   const severityData = stats.findings_by_severity || defaultSeverity;
+  const typeData = stats.findings_by_type || defaultFindingTypes;
   const openFindingsCount = (severityData.critical || 0) + (severityData.high || 0);
+  const totalTypeFindings = Object.values(typeData).reduce((a, b) => a + b, 0);
 
   if (loading) {
     return (
@@ -311,6 +425,7 @@ export function Dashboard() {
           value={stats.total_repositories}
           icon={GitBranch}
           color="blue"
+          link="/repositories"
         />
         <StatCard
           title="Open Findings"
@@ -319,6 +434,7 @@ export function Dashboard() {
           trend="up"
           icon={AlertTriangle}
           color="red"
+          link="/findings?status=open"
         />
         <StatCard
           title="Resolved"
@@ -327,6 +443,7 @@ export function Dashboard() {
           trend="down"
           icon={CheckCircle}
           color="green"
+          link="/findings?status=resolved"
         />
         <StatCard
           title="Security Score"
@@ -334,6 +451,24 @@ export function Dashboard() {
           icon={Shield}
           color="purple"
         />
+      </div>
+
+      {/* Vulnerability Types Summary */}
+      <div className="card-glow">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="section-title">
+            <Bug className="w-5 h-5 text-neon-blue" />
+            Findings by Type
+          </h3>
+          <Link to="/findings" className="text-sm text-neon-blue hover:underline flex items-center gap-1">
+            View All Findings <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          {Object.entries(typeData).map(([type, count]) => (
+            <TypeStatCard key={type} type={type} count={count} total={totalTypeFindings} />
+          ))}
+        </div>
       </div>
 
       {/* Charts Row */}
@@ -347,27 +482,117 @@ export function Dashboard() {
           <SeverityChart data={severityData} />
         </div>
 
-        {/* Trends Chart */}
-        <div className="card-glow lg:col-span-2">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="section-title">
-              <TrendingUp className="w-5 h-5 text-neon-blue" />
-              Findings Trend (14 days)
-            </h3>
-            <Link to="/trends" className="text-sm text-neon-blue hover:underline flex items-center gap-1">
-              View All <ArrowRight className="w-4 h-4" />
+        {/* Type Distribution */}
+        <div className="card-glow">
+          <h3 className="section-title mb-4">
+            <Code className="w-5 h-5 text-neon-blue" />
+            Vulnerability Types
+          </h3>
+          <TypeDistributionChart data={typeData} />
+        </div>
+
+        {/* Quick Actions */}
+        <div className="card-glow">
+          <h3 className="section-title mb-4">
+            <Shield className="w-5 h-5 text-neon-blue" />
+            Quick Actions
+          </h3>
+          <div className="space-y-3">
+            <Link 
+              to="/findings?severity=critical" 
+              className="flex items-center justify-between p-3 rounded-lg bg-neon-red/10 border border-neon-red/30 
+                       hover:bg-neon-red/20 transition-all group"
+            >
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-neon-red" />
+                <span className="text-sm text-gray-200">Critical Findings</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-bold text-neon-red">{severityData.critical}</span>
+                <ArrowRight className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            </Link>
+            
+            <Link 
+              to="/findings?type=secret" 
+              className="flex items-center justify-between p-3 rounded-lg bg-cyber-surface/50 border border-cyber-border/50 
+                       hover:border-neon-blue/30 transition-all group"
+            >
+              <div className="flex items-center gap-3">
+                <Key className="w-5 h-5 text-neon-red" />
+                <span className="text-sm text-gray-200">Exposed Secrets</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-bold text-gray-100">{typeData.secret}</span>
+                <ArrowRight className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            </Link>
+
+            <Link 
+              to="/findings?type=sast" 
+              className="flex items-center justify-between p-3 rounded-lg bg-cyber-surface/50 border border-cyber-border/50 
+                       hover:border-neon-blue/30 transition-all group"
+            >
+              <div className="flex items-center gap-3">
+                <Code className="w-5 h-5 text-neon-purple" />
+                <span className="text-sm text-gray-200">Code Vulnerabilities (SAST)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-bold text-gray-100">{typeData.sast}</span>
+                <ArrowRight className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            </Link>
+
+            <Link 
+              to="/findings?type=vulnerability" 
+              className="flex items-center justify-between p-3 rounded-lg bg-cyber-surface/50 border border-cyber-border/50 
+                       hover:border-neon-blue/30 transition-all group"
+            >
+              <div className="flex items-center gap-3">
+                <ShieldAlert className="w-5 h-5 text-neon-orange" />
+                <span className="text-sm text-gray-200">Dependency CVEs</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-bold text-gray-100">{typeData.vulnerability}</span>
+                <ArrowRight className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            </Link>
+
+            <Link 
+              to="/scans" 
+              className="flex items-center justify-between p-3 rounded-lg bg-neon-blue/10 border border-neon-blue/30 
+                       hover:bg-neon-blue/20 transition-all group"
+            >
+              <div className="flex items-center gap-3">
+                <Activity className="w-5 h-5 text-neon-blue" />
+                <span className="text-sm text-gray-200">Start New Scan</span>
+              </div>
+              <ArrowRight className="w-4 h-4 text-neon-blue" />
             </Link>
           </div>
-          {trends.length > 0 ? (
-            <TrendsChart data={trends} />
-          ) : (
-            <div className="text-center py-8 text-gray-500 h-80 flex flex-col items-center justify-center">
-              <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p>No trend data available</p>
-              <p className="text-sm">Run scans over time to see trends</p>
-            </div>
-          )}
         </div>
+      </div>
+
+      {/* Trends Chart */}
+      <div className="card-glow">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="section-title">
+            <TrendingUp className="w-5 h-5 text-neon-blue" />
+            Findings Trend (14 days)
+          </h3>
+          <Link to="/trends" className="text-sm text-neon-blue hover:underline flex items-center gap-1">
+            View All <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+        {trends.length > 0 ? (
+          <TrendsChart data={trends} />
+        ) : (
+          <div className="text-center py-8 text-gray-500 h-80 flex flex-col items-center justify-center">
+            <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>No trend data available</p>
+            <p className="text-sm">Run scans over time to see trends</p>
+          </div>
+        )}
       </div>
 
       {/* Bottom Row */}

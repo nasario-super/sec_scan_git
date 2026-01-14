@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Search,
   GitBranch,
@@ -11,6 +12,7 @@ import {
   ExternalLink,
   Code,
   Archive,
+  Eye,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { SeverityBadge } from '../components/ui/SeverityBadge';
@@ -39,7 +41,7 @@ function RepositoryCard({ repo, onScan, isScanning }: { repo: Repository; onScan
 
   return (
     <div className={clsx(
-      'card group transition-all',
+      'card group transition-all hover:border-neon-blue/50',
       hasCritical && 'border-severity-critical/30',
       !hasCritical && hasHigh && 'border-severity-high/30',
       repo.is_archived && 'opacity-60'
@@ -52,23 +54,36 @@ function RepositoryCard({ repo, onScan, isScanning }: { repo: Repository; onScan
           ) : (
             <Unlock className="w-4 h-4 text-gray-500" />
           )}
-          <h3 className="font-medium text-gray-100 group-hover:text-neon-blue transition-colors">
+          <Link 
+            to={`/repositories/${encodeURIComponent(repo.full_name)}`}
+            className="font-medium text-gray-100 hover:text-neon-blue transition-colors"
+          >
             {repo.name}
-          </h3>
+          </Link>
           {repo.is_archived && (
             <span className="px-2 py-0.5 text-xs bg-gray-700 text-gray-400 rounded">
               Archived
             </span>
           )}
         </div>
-        <a
-          href={repo.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-gray-500 hover:text-gray-300 transition-colors"
-        >
-          <ExternalLink className="w-4 h-4" />
-        </a>
+        <div className="flex items-center gap-2">
+          <Link
+            to={`/repositories/${encodeURIComponent(repo.full_name)}`}
+            className="text-gray-500 hover:text-neon-blue transition-colors"
+            title="View Details"
+          >
+            <Eye className="w-4 h-4" />
+          </Link>
+          <a
+            href={repo.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-gray-500 hover:text-gray-300 transition-colors"
+            title="Open on GitHub"
+          >
+            <ExternalLink className="w-4 h-4" />
+          </a>
+        </div>
       </div>
 
       {/* Description */}
