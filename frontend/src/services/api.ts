@@ -201,8 +201,9 @@ class ApiService {
       include_archived?: boolean;
       include_forks?: boolean;
       scan_mode?: 'full' | 'api_only' | 'shallow';
+      fetch_github_alerts?: boolean;
     }
-  ): Promise<{ scan_id: string; status: string; mode?: string }> {
+  ): Promise<{ scan_id: string; status: string; mode?: string; fetch_github_alerts?: boolean }> {
     return this.request('/scans', {
       method: 'POST',
       body: JSON.stringify({
@@ -212,6 +213,7 @@ class ApiService {
         include_archived: options?.include_archived ?? false,
         include_forks: options?.include_forks ?? false,
         scan_mode: options?.scan_mode ?? 'api_only',
+        fetch_github_alerts: options?.fetch_github_alerts ?? false,
       }),
     });
   }

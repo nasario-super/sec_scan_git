@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Users,
   LogOut,
+  ShieldAlert,
 } from 'lucide-react';
 import { useStore } from '../../stores/useStore';
 import { useAuth } from '../../contexts/AuthContext';
@@ -22,6 +23,7 @@ const navigation = [
   { name: 'Findings', href: '/findings', icon: AlertTriangle },
   { name: 'Scans', href: '/scans', icon: ScanLine },
   { name: 'Repositories', href: '/repositories', icon: GitBranch },
+  { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert },
   { name: 'History', href: '/history', icon: History },
   { name: 'Trends', href: '/trends', icon: TrendingUp },
 ];

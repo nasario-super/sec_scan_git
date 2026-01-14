@@ -53,6 +53,7 @@ class ScanRequest(BaseModel):
     include_archived: bool = False
     include_forks: bool = False
     scan_mode: str = "full"  # "full" = clone repos, "api_only" = use GitHub API (faster), "shallow" = shallow clone
+    fetch_github_alerts: bool = False  # Fetch Dependabot, Code Scanning, Secret Scanning alerts
 
 
 class RepoScanRequest(BaseModel):
@@ -299,6 +300,10 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+# Include routers
+from .alerts_router import router as alerts_router
+app.include_router(alerts_router)
 
 
 # === Authentication Endpoints ===
@@ -606,9 +611,10 @@ async def start_scan(
         request.include_archived,
         request.include_forks,
         request.scan_mode,
+        request.fetch_github_alerts,
     )
     
-    return {"scan_id": scan_id, "status": "started", "started_by": user.user_id, "mode": request.scan_mode}
+    return {"scan_id": scan_id, "status": "started", "started_by": user.user_id, "mode": request.scan_mode, "fetch_github_alerts": request.fetch_github_alerts}
 
 
 @app.post("/api/scans/repo", tags=["Scans"], dependencies=[Depends(check_rate_limit)])
@@ -1180,6 +1186,116 @@ async def get_activity_history(
 
 # === Background Tasks ===
 
+async def _fetch_and_save_github_alerts(
+    token: str,
+    organization: str,
+    repos_list: list[str],
+    scan_id: str,
+    db_scan_id: str,
+):
+    """
+    Fetch GitHub Security Alerts (Dependabot, Code Scanning, Secret Scanning)
+    for all repositories in the organization and save to database.
+    """
+    from ..github.security_alerts import (
+        GitHubSecurityAlertsClient,
+        AlertsNotEnabledError,
+        AlertsAccessDeniedError,
+    )
+    
+    console.print(f"\n[cyan]🛡️ Fetching GitHub Security Alerts for {len(repos_list)} repositories...[/cyan]")
+    
+    active_scans[scan_id]["fetching_alerts"] = True
+    active_scans[scan_id]["alerts_progress"] = 0
+    
+    alerts_summary = {
+        "dependabot_total": 0,
+        "dependabot_critical": 0,
+        "dependabot_high": 0,
+        "code_scanning_total": 0,
+        "code_scanning_critical": 0,
+        "code_scanning_high": 0,
+        "secret_scanning_total": 0,
+    }
+    
+    try:
+        async with GitHubSecurityAlertsClient(token) as client:
+            for i, repo_full_name in enumerate(repos_list):
+                # Ensure full name format
+                if "/" not in repo_full_name:
+                    repo_full_name = f"{organization}/{repo_full_name}"
+                
+                try:
+                    # Fetch all alerts for this repo
+                    all_alerts = await client.get_all_alerts(repo_full_name, state="open")
+                    
+                    # Count by type
+                    dep_alerts = all_alerts.get("dependabot", [])
+                    cs_alerts = all_alerts.get("code_scanning", [])
+                    ss_alerts = all_alerts.get("secret_scanning", [])
+                    
+                    alerts_summary["dependabot_total"] += len(dep_alerts)
+                    alerts_summary["code_scanning_total"] += len(cs_alerts)
+                    alerts_summary["secret_scanning_total"] += len(ss_alerts)
+                    
+                    # Count critical/high
+                    for alert in dep_alerts:
+                        if alert.severity.value == "critical":
+                            alerts_summary["dependabot_critical"] += 1
+                        elif alert.severity.value == "high":
+                            alerts_summary["dependabot_high"] += 1
+                    
+                    for alert in cs_alerts:
+                        if alert.severity.value == "critical":
+                            alerts_summary["code_scanning_critical"] += 1
+                        elif alert.severity.value == "high":
+                            alerts_summary["code_scanning_high"] += 1
+                    
+                    # TODO: Save alerts to database tables
+                    # This would require implementing save methods in postgres_database.py
+                    # For now, we just log and update the summary
+                    
+                    if len(dep_alerts) + len(cs_alerts) + len(ss_alerts) > 0:
+                        logger.info(
+                            f"  {repo_full_name}: {len(dep_alerts)} dependabot, "
+                            f"{len(cs_alerts)} code scanning, {len(ss_alerts)} secret scanning"
+                        )
+                
+                except AlertsNotEnabledError:
+                    # Feature not enabled for this repo, skip silently
+                    pass
+                except AlertsAccessDeniedError as e:
+                    logger.debug(f"Access denied for {repo_full_name} alerts: {e}")
+                except Exception as e:
+                    logger.warning(f"Error fetching alerts for {repo_full_name}: {e}")
+                
+                # Update progress
+                if i % 20 == 0 or i == len(repos_list) - 1:
+                    progress = int((i + 1) / len(repos_list) * 100)
+                    active_scans[scan_id]["alerts_progress"] = progress
+                    active_scans[scan_id]["github_alerts"] = alerts_summary.copy()
+        
+        # Final summary
+        total_github_alerts = (
+            alerts_summary["dependabot_total"] + 
+            alerts_summary["code_scanning_total"] + 
+            alerts_summary["secret_scanning_total"]
+        )
+        
+        console.print(f"\n[green]✅ GitHub Alerts fetched: {total_github_alerts} total[/green]")
+        console.print(f"   📦 Dependabot: {alerts_summary['dependabot_total']} ({alerts_summary['dependabot_critical']} critical)")
+        console.print(f"   🔍 Code Scanning: {alerts_summary['code_scanning_total']} ({alerts_summary['code_scanning_critical']} critical)")
+        console.print(f"   🔑 Secret Scanning: {alerts_summary['secret_scanning_total']}")
+        
+        active_scans[scan_id]["github_alerts"] = alerts_summary
+        active_scans[scan_id]["fetching_alerts"] = False
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch GitHub alerts: {e}")
+        active_scans[scan_id]["alerts_error"] = str(e)
+        active_scans[scan_id]["fetching_alerts"] = False
+
+
 async def run_org_scan(
     scan_id: str,
     organization: str,
@@ -1188,8 +1304,9 @@ async def run_org_scan(
     include_archived: bool,
     include_forks: bool,
     scan_mode: str = "full",
+    fetch_github_alerts: bool = False,
 ):
-    """Run organization scan in background."""
+    """Run organization scan in background with optional GitHub Security Alerts fetching."""
     try:
         settings.github.token = token
         settings.scan.analyze_history = include_historical
@@ -1304,6 +1421,12 @@ async def run_org_scan(
             }
             
             console.print(f"\n[green]✅ Scan completed! {final_progress.get('total_findings', 0)} findings in {len(repos_list)} repositories[/green]")
+            
+            # Fetch GitHub Security Alerts if requested
+            if fetch_github_alerts:
+                await _fetch_and_save_github_alerts(
+                    token, organization, repos_list, scan_id, db_scan_id
+                )
         else:
             # Full or shallow clone scan
             scanner = SecurityScanner(settings)
@@ -1318,6 +1441,13 @@ async def run_org_scan(
             # Save to database
             db_scan_id = db.save_scan(result)
             db.mark_fixed_findings(db_scan_id)
+            
+            # Fetch GitHub Security Alerts if requested
+            if fetch_github_alerts:
+                repos_list = list(result.repositories.keys()) if result.repositories else []
+                await _fetch_and_save_github_alerts(
+                    token, organization, repos_list, scan_id, db_scan_id
+                )
             
             active_scans[scan_id] = {
                 "status": "completed",

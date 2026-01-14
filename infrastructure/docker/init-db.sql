@@ -303,6 +303,295 @@ CREATE INDEX idx_daily_metrics_date ON daily_metrics(date DESC);
 CREATE INDEX idx_daily_metrics_org ON daily_metrics(organization_id, date DESC);
 
 -- =============================================================================
+-- GitHub Security Alerts Tables
+-- =============================================================================
+
+-- Alert source types
+CREATE TYPE alert_source AS ENUM ('dependabot', 'code_scanning', 'secret_scanning', 'custom_scan');
+CREATE TYPE alert_state AS ENUM ('open', 'dismissed', 'fixed', 'auto_dismissed');
+
+-- Dependabot Alerts (Vulnerable Dependencies)
+CREATE TABLE dependabot_alerts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    repository_id UUID REFERENCES repositories(id) ON DELETE CASCADE,
+    
+    -- GitHub Alert Info
+    github_alert_number INTEGER NOT NULL,
+    state alert_state DEFAULT 'open',
+    severity severity_level NOT NULL,
+    
+    -- Package Info
+    package_ecosystem VARCHAR(50) NOT NULL,  -- npm, pip, maven, etc.
+    package_name VARCHAR(255) NOT NULL,
+    vulnerable_version_range TEXT,
+    first_patched_version VARCHAR(100),
+    
+    -- Vulnerability Details
+    ghsa_id VARCHAR(50),  -- GitHub Security Advisory ID
+    cve_id VARCHAR(50),
+    summary TEXT,
+    description TEXT,
+    manifest_path TEXT,
+    
+    -- CVSS
+    cvss_score DECIMAL(3,1),
+    cvss_vector TEXT,
+    cwes TEXT[],  -- Array of CWE IDs
+    
+    -- Dismissal Info
+    dismissed_at TIMESTAMP WITH TIME ZONE,
+    dismissed_by VARCHAR(255),
+    dismissed_reason VARCHAR(50),
+    dismissed_comment TEXT,
+    
+    -- Fix Info
+    fixed_at TIMESTAMP WITH TIME ZONE,
+    
+    -- URLs
+    html_url TEXT,
+    advisory_url TEXT,
+    
+    -- Tracking
+    first_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Fingerprint for deduplication
+    fingerprint VARCHAR(128) NOT NULL,
+    
+    UNIQUE(repository_id, fingerprint)
+);
+
+CREATE INDEX idx_dependabot_repo ON dependabot_alerts(repository_id);
+CREATE INDEX idx_dependabot_state ON dependabot_alerts(state);
+CREATE INDEX idx_dependabot_severity ON dependabot_alerts(severity);
+CREATE INDEX idx_dependabot_package ON dependabot_alerts(package_ecosystem, package_name);
+CREATE INDEX idx_dependabot_ghsa ON dependabot_alerts(ghsa_id);
+CREATE INDEX idx_dependabot_cve ON dependabot_alerts(cve_id);
+
+-- Code Scanning Alerts (SAST from CodeQL)
+CREATE TABLE code_scanning_alerts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    repository_id UUID REFERENCES repositories(id) ON DELETE CASCADE,
+    
+    -- GitHub Alert Info
+    github_alert_number INTEGER NOT NULL,
+    state alert_state DEFAULT 'open',
+    severity severity_level NOT NULL,
+    
+    -- Rule Info
+    rule_id VARCHAR(255) NOT NULL,
+    rule_name VARCHAR(255),
+    rule_description TEXT,
+    rule_severity VARCHAR(50),
+    rule_tags TEXT[],
+    
+    -- Tool Info
+    tool_name VARCHAR(100),  -- e.g., "CodeQL"
+    tool_version VARCHAR(50),
+    
+    -- Location
+    file_path TEXT NOT NULL,
+    start_line INTEGER,
+    end_line INTEGER,
+    start_column INTEGER,
+    end_column INTEGER,
+    
+    -- Instance Details
+    ref VARCHAR(255),  -- Branch reference
+    commit_sha VARCHAR(40),
+    message TEXT,
+    
+    -- Dismissal Info
+    dismissed_at TIMESTAMP WITH TIME ZONE,
+    dismissed_by VARCHAR(255),
+    dismissed_reason VARCHAR(50),
+    dismissed_comment TEXT,
+    
+    -- Fix Info
+    fixed_at TIMESTAMP WITH TIME ZONE,
+    
+    -- URL
+    html_url TEXT,
+    
+    -- Tracking
+    first_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Fingerprint for deduplication
+    fingerprint VARCHAR(128) NOT NULL,
+    
+    UNIQUE(repository_id, fingerprint)
+);
+
+CREATE INDEX idx_code_scanning_repo ON code_scanning_alerts(repository_id);
+CREATE INDEX idx_code_scanning_state ON code_scanning_alerts(state);
+CREATE INDEX idx_code_scanning_severity ON code_scanning_alerts(severity);
+CREATE INDEX idx_code_scanning_rule ON code_scanning_alerts(rule_id);
+CREATE INDEX idx_code_scanning_tool ON code_scanning_alerts(tool_name);
+CREATE INDEX idx_code_scanning_file ON code_scanning_alerts(file_path);
+
+-- Secret Scanning Alerts
+CREATE TABLE secret_scanning_alerts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    repository_id UUID REFERENCES repositories(id) ON DELETE CASCADE,
+    
+    -- GitHub Alert Info
+    github_alert_number INTEGER NOT NULL,
+    state alert_state DEFAULT 'open',
+    
+    -- Secret Info
+    secret_type VARCHAR(100) NOT NULL,
+    secret_type_display_name VARCHAR(255),
+    secret_masked TEXT,  -- Partially masked secret
+    
+    -- Locations (stored as JSONB for flexibility)
+    locations JSONB DEFAULT '[]',
+    
+    -- Push Protection
+    push_protection_bypassed BOOLEAN DEFAULT FALSE,
+    push_protection_bypassed_by VARCHAR(255),
+    push_protection_bypassed_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Resolution
+    resolution VARCHAR(50),  -- false_positive, wont_fix, revoked, used_in_tests
+    resolution_comment TEXT,
+    resolved_by VARCHAR(255),
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    
+    -- URL
+    html_url TEXT,
+    
+    -- Tracking
+    first_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Fingerprint for deduplication
+    fingerprint VARCHAR(128) NOT NULL,
+    
+    UNIQUE(repository_id, fingerprint)
+);
+
+CREATE INDEX idx_secret_scanning_repo ON secret_scanning_alerts(repository_id);
+CREATE INDEX idx_secret_scanning_state ON secret_scanning_alerts(state);
+CREATE INDEX idx_secret_scanning_type ON secret_scanning_alerts(secret_type);
+
+-- Alerts Sync History (track when alerts were last fetched)
+CREATE TABLE alerts_sync_history (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    repository_id UUID REFERENCES repositories(id) ON DELETE CASCADE,
+    alert_type alert_source NOT NULL,
+    
+    last_sync_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    alerts_found INTEGER DEFAULT 0,
+    alerts_new INTEGER DEFAULT 0,
+    alerts_updated INTEGER DEFAULT 0,
+    sync_duration_ms INTEGER,
+    error_message TEXT,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_alerts_sync_repo ON alerts_sync_history(repository_id);
+CREATE INDEX idx_alerts_sync_type ON alerts_sync_history(alert_type);
+CREATE INDEX idx_alerts_sync_time ON alerts_sync_history(last_sync_at DESC);
+
+-- Consolidated Alerts View
+CREATE OR REPLACE VIEW consolidated_alerts AS
+SELECT 
+    id,
+    repository_id,
+    'dependabot' as source,
+    github_alert_number as alert_number,
+    state::text,
+    severity::text,
+    package_name as identifier,
+    ghsa_id as reference_id,
+    summary as title,
+    description,
+    manifest_path as location,
+    NULL::INTEGER as line_number,
+    html_url,
+    first_seen_at,
+    last_seen_at,
+    created_at
+FROM dependabot_alerts
+
+UNION ALL
+
+SELECT 
+    id,
+    repository_id,
+    'code_scanning' as source,
+    github_alert_number as alert_number,
+    state::text,
+    severity::text,
+    rule_id as identifier,
+    rule_name as reference_id,
+    rule_name as title,
+    rule_description as description,
+    file_path as location,
+    start_line as line_number,
+    html_url,
+    first_seen_at,
+    last_seen_at,
+    created_at
+FROM code_scanning_alerts
+
+UNION ALL
+
+SELECT 
+    id,
+    repository_id,
+    'secret_scanning' as source,
+    github_alert_number as alert_number,
+    state::text,
+    CASE 
+        WHEN secret_type LIKE '%token%' OR secret_type LIKE '%key%' THEN 'critical'
+        ELSE 'high'
+    END as severity,
+    secret_type as identifier,
+    NULL as reference_id,
+    secret_type_display_name as title,
+    NULL as description,
+    NULL as location,
+    NULL::INTEGER as line_number,
+    html_url,
+    first_seen_at,
+    last_seen_at,
+    created_at
+FROM secret_scanning_alerts;
+
+-- Alerts Summary View by Repository
+CREATE OR REPLACE VIEW repository_alerts_summary AS
+SELECT 
+    r.id as repository_id,
+    r.full_name,
+    -- Dependabot
+    COUNT(DISTINCT CASE WHEN d.state = 'open' THEN d.id END) as dependabot_open,
+    COUNT(DISTINCT CASE WHEN d.state = 'open' AND d.severity = 'critical' THEN d.id END) as dependabot_critical,
+    COUNT(DISTINCT CASE WHEN d.state = 'open' AND d.severity = 'high' THEN d.id END) as dependabot_high,
+    -- Code Scanning
+    COUNT(DISTINCT CASE WHEN cs.state = 'open' THEN cs.id END) as code_scanning_open,
+    COUNT(DISTINCT CASE WHEN cs.state = 'open' AND cs.severity = 'critical' THEN cs.id END) as code_scanning_critical,
+    COUNT(DISTINCT CASE WHEN cs.state = 'open' AND cs.severity = 'high' THEN cs.id END) as code_scanning_high,
+    -- Secret Scanning
+    COUNT(DISTINCT CASE WHEN ss.state = 'open' THEN ss.id END) as secret_scanning_open,
+    -- Last sync
+    MAX(ash.last_sync_at) as last_alerts_sync
+FROM repositories r
+LEFT JOIN dependabot_alerts d ON d.repository_id = r.id
+LEFT JOIN code_scanning_alerts cs ON cs.repository_id = r.id
+LEFT JOIN secret_scanning_alerts ss ON ss.repository_id = r.id
+LEFT JOIN alerts_sync_history ash ON ash.repository_id = r.id
+GROUP BY r.id, r.full_name;
+
+-- =============================================================================
 -- Functions and Triggers
 -- =============================================================================
 

@@ -24,6 +24,7 @@ const queryClient = new QueryClient({
 
 import { History } from './pages/History';
 import { Trends } from './pages/Trends';
+import { SecurityAlerts } from './pages/SecurityAlerts';
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRole }: { children: React.ReactNode; requiredRole?: string }) {
@@ -292,6 +293,7 @@ function AppRoutes() {
         <Route path="repositories" element={<Repositories />} />
         <Route path="history" element={<History />} />
         <Route path="trends" element={<Trends />} />
+        <Route path="security-alerts" element={<SecurityAlerts />} />
         <Route path="settings" element={<Settings />} />
         
         {/* Admin only routes */}

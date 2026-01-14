@@ -42,6 +42,7 @@ interface NewScanModalProps {
     includeArchived: boolean;
     includeForks: boolean;
     scanMode: 'full' | 'api_only' | 'shallow';
+    fetchGitHubAlerts: boolean;
   }) => void;
   defaultToken?: string;
   defaultOrg?: string;
@@ -56,6 +57,7 @@ function NewScanModal({ isOpen, onClose, onSubmit, defaultToken = '', defaultOrg
   const [includeForks, setIncludeForks] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [scanMode, setScanMode] = useState<'full' | 'api_only' | 'shallow'>('api_only');
+  const [fetchGitHubAlerts, setFetchGitHubAlerts] = useState(true);  // Default to true
 
   // Update target when defaultOrg changes
   useEffect(() => {
@@ -230,6 +232,24 @@ function NewScanModal({ isOpen, onClose, onSubmit, defaultToken = '', defaultOrg
               </label>
             </>
           )}
+          
+          {/* GitHub Security Alerts */}
+          <div className="pt-3 border-t border-cyber-border/50">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={fetchGitHubAlerts}
+                onChange={(e) => setFetchGitHubAlerts(e.target.checked)}
+                className="w-4 h-4 rounded border-cyber-border bg-cyber-surface"
+              />
+              <span className="text-sm text-gray-300">
+                🛡️ Fetch GitHub Security Alerts
+              </span>
+            </label>
+            <p className="text-xs text-gray-500 mt-1 ml-7">
+              Include Dependabot, Code Scanning, and Secret Scanning alerts from GitHub
+            </p>
+          </div>
         </div>
 
         {/* Warning if no token */}
@@ -248,7 +268,7 @@ function NewScanModal({ isOpen, onClose, onSubmit, defaultToken = '', defaultOrg
           </button>
           <button
             onClick={() => {
-              onSubmit(scanType, target, token, { includeHistorical, includeArchived, includeForks, scanMode });
+              onSubmit(scanType, target, token, { includeHistorical, includeArchived, includeForks, scanMode, fetchGitHubAlerts });
               onClose();
             }}
             disabled={!canSubmit}
@@ -452,7 +472,7 @@ export function Scans() {
     type: 'org' | 'repo',
     target: string,
     token: string,
-    options: { includeHistorical: boolean; includeArchived: boolean; includeForks: boolean; scanMode: 'full' | 'api_only' | 'shallow' }
+    options: { includeHistorical: boolean; includeArchived: boolean; includeForks: boolean; scanMode: 'full' | 'api_only' | 'shallow'; fetchGitHubAlerts: boolean }
   ) => {
     try {
       // Save token to settings for future use
@@ -469,6 +489,7 @@ export function Scans() {
             include_archived: options.includeArchived,
             include_forks: options.includeForks,
             scan_mode: options.scanMode,
+            fetch_github_alerts: options.fetchGitHubAlerts,
           })
         : await api.startRepoScan(target, token, {
             full_history: options.includeHistorical,
