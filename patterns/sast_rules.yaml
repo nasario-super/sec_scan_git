@@ -5,7 +5,7 @@ rules:
   # SQL Injection
   - id: sast/sql-injection-format
     name: SQL Injection (String Format)
-    pattern: 'execute\s*\(\s*["\'].*%s|execute\s*\(\s*f["\']|\.format\s*\('
+    pattern: "execute\\s*\\(\\s*[\"'].*%s|execute\\s*\\(\\s*f[\"']|\\.format\\s*\\("
     severity: critical
     description: "Potential SQL injection through string formatting"
     remediation: "Use parameterized queries or prepared statements"
@@ -16,7 +16,7 @@ rules:
 
   - id: sast/sql-injection-concat
     name: SQL Injection (Concatenation)
-    pattern: '(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE).*\+\s*["\']?\s*\w+\s*["\']?\s*\+'
+    pattern: "(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE).*\\+\\s*[\"']?\\s*\\w+\\s*[\"']?\\s*\\+"
     severity: critical
     description: "Potential SQL injection through string concatenation"
     remediation: "Use parameterized queries instead of string concatenation"

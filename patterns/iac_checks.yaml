@@ -140,7 +140,7 @@ checks:
 
   - id: iac/k8s-capabilities-all
     name: All Capabilities Added
-    pattern: 'add:\s*\[\s*["\']?ALL["\']?\s*\]'
+    pattern: "add:\\s*\\[\\s*[\"']?ALL[\"']?\\s*\\]"
     severity: critical
     description: "Container has all capabilities added"
     remediation: "Only add specific required capabilities"
