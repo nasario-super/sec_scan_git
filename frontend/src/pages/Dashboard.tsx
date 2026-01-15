@@ -149,7 +149,7 @@ function SeverityChart({ data }: { data: Record<Severity, number> }) {
 
   return (
     <div className="h-64">
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
         <PieChart>
           <Pie
             data={chartData}
@@ -212,7 +212,7 @@ function TypeDistributionChart({ data }: { data: Record<string, number> }) {
 
   return (
     <div className="h-64">
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
         <BarChart data={chartData} layout="vertical">
           <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" horizontal={false} />
           <XAxis type="number" stroke="#6b7280" fontSize={12} />
@@ -245,7 +245,7 @@ function TypeDistributionChart({ data }: { data: Record<string, number> }) {
 function TrendsChart({ data }: { data: TrendData[] }) {
   return (
     <div className="h-80">
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
         <AreaChart data={data}>
           <defs>
             <linearGradient id="colorCritical" x1="0" y1="0" x2="0" y2="1">
@@ -301,7 +301,7 @@ function TrendsChart({ data }: { data: TrendData[] }) {
 function TopRepositoriesChart({ data }: { data: Array<{ name: string; findings_count: number }> }) {
   return (
     <div className="h-64">
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
         <BarChart data={data} layout="vertical">
           <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" horizontal={false} />
           <XAxis type="number" stroke="#6b7280" fontSize={12} />

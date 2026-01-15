@@ -321,9 +321,12 @@ class SecurityScanner:
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for result in results:
+        for i, result in enumerate(results):
             if isinstance(result, Exception):
-                console.print(f"[yellow]Analyzer error: {result}[/yellow]")
+                analyzer_name = self.analyzers[i].name if i < len(self.analyzers) else "unknown"
+                console.print(f"[red]❌ Analyzer error ({analyzer_name}): {type(result).__name__}: {result}[/red]")
+                import traceback
+                traceback.print_exception(type(result), result, result.__traceback__)
                 continue
             all_findings.extend(result)
 

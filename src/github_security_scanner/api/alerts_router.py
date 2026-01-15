@@ -26,6 +26,8 @@ from ..github.security_alerts import (
     AlertsAccessDeniedError,
     AlertsRateLimitError,
 )
+from ..github.client import GitHubClient
+from ..core.config import get_settings
 from .auth import TokenData, require_auth, require_analyst_or_admin
 
 logger = logging.getLogger(__name__)
@@ -92,6 +94,44 @@ class AlertsSummaryResponse(BaseModel):
     total_open: int = 0
     
     last_sync_at: Optional[str] = None
+
+
+class OrgAlertsSummaryResponse(BaseModel):
+    """Organization-level summary with per-repo breakdown."""
+    organization: str
+    repos_scanned: int = 0
+    repos_with_alerts: int = 0
+    errors: list[dict] = []
+    summaries: list[AlertsSummaryResponse] = []
+    last_sync_at: Optional[str] = None
+
+    # Aggregated totals
+    dependabot_total: int = 0
+    dependabot_critical: int = 0
+    dependabot_high: int = 0
+    dependabot_medium: int = 0
+    dependabot_low: int = 0
+    dependabot_open: int = 0
+    dependabot_fixed: int = 0
+    dependabot_dismissed: int = 0
+
+    code_scanning_total: int = 0
+    code_scanning_critical: int = 0
+    code_scanning_high: int = 0
+    code_scanning_medium: int = 0
+    code_scanning_low: int = 0
+    code_scanning_open: int = 0
+    code_scanning_fixed: int = 0
+    code_scanning_dismissed: int = 0
+
+    secret_scanning_total: int = 0
+    secret_scanning_open: int = 0
+    secret_scanning_resolved: int = 0
+
+    total_alerts: int = 0
+    total_critical: int = 0
+    total_high: int = 0
+    total_open: int = 0
 
 
 class DependabotAlertResponse(BaseModel):
@@ -321,6 +361,92 @@ async def get_sync_status(sync_id: str):
     return active_syncs[sync_id]
 
 
+async def _list_org_repositories(
+    organization: str,
+    token: str,
+    include_archived: bool,
+    include_forks: bool,
+    max_repos: int,
+) -> list[str]:
+    """List repositories in an organization using GitHub API."""
+    settings = get_settings()
+    settings.github.token = token
+    repos: list[str] = []
+    async with GitHubClient(settings.github) as client:
+        async for repo_data in client.list_organization_repos(organization):
+            if not include_archived and repo_data.get("archived"):
+                continue
+            if not include_forks and repo_data.get("fork"):
+                continue
+            full_name = repo_data.get("full_name")
+            if full_name:
+                repos.append(full_name)
+            if max_repos and len(repos) >= max_repos:
+                break
+    return repos
+
+
+def _to_summary_response(summary: AlertsSummary) -> AlertsSummaryResponse:
+    """Convert AlertsSummary to response model."""
+    return AlertsSummaryResponse(
+        organization=summary.organization,
+        repository=summary.repository,
+        dependabot_total=summary.dependabot_total,
+        dependabot_critical=summary.dependabot_critical,
+        dependabot_high=summary.dependabot_high,
+        dependabot_medium=summary.dependabot_medium,
+        dependabot_low=summary.dependabot_low,
+        dependabot_open=summary.dependabot_open,
+        dependabot_fixed=summary.dependabot_fixed,
+        dependabot_dismissed=summary.dependabot_dismissed,
+        code_scanning_total=summary.code_scanning_total,
+        code_scanning_critical=summary.code_scanning_critical,
+        code_scanning_high=summary.code_scanning_high,
+        code_scanning_medium=summary.code_scanning_medium,
+        code_scanning_low=summary.code_scanning_low,
+        code_scanning_open=summary.code_scanning_open,
+        code_scanning_fixed=summary.code_scanning_fixed,
+        code_scanning_dismissed=summary.code_scanning_dismissed,
+        secret_scanning_total=summary.secret_scanning_total,
+        secret_scanning_open=summary.secret_scanning_open,
+        secret_scanning_resolved=summary.secret_scanning_resolved,
+        total_alerts=summary.total_alerts,
+        total_critical=summary.total_critical,
+        total_high=summary.total_high,
+        total_open=summary.total_open,
+    )
+
+
+def _merge_totals(target: OrgAlertsSummaryResponse, summary: AlertsSummary) -> None:
+    """Accumulate alert totals."""
+    target.dependabot_total += summary.dependabot_total
+    target.dependabot_critical += summary.dependabot_critical
+    target.dependabot_high += summary.dependabot_high
+    target.dependabot_medium += summary.dependabot_medium
+    target.dependabot_low += summary.dependabot_low
+    target.dependabot_open += summary.dependabot_open
+    target.dependabot_fixed += summary.dependabot_fixed
+    target.dependabot_dismissed += summary.dependabot_dismissed
+
+    target.code_scanning_total += summary.code_scanning_total
+    target.code_scanning_critical += summary.code_scanning_critical
+    target.code_scanning_high += summary.code_scanning_high
+    target.code_scanning_medium += summary.code_scanning_medium
+    target.code_scanning_low += summary.code_scanning_low
+    target.code_scanning_open += summary.code_scanning_open
+    target.code_scanning_fixed += summary.code_scanning_fixed
+    target.code_scanning_dismissed += summary.code_scanning_dismissed
+
+    target.secret_scanning_total += summary.secret_scanning_total
+    target.secret_scanning_open += summary.secret_scanning_open
+    target.secret_scanning_resolved += summary.secret_scanning_resolved
+
+    target.total_alerts += summary.total_alerts
+    target.total_critical += summary.total_critical
+    target.total_high += summary.total_high
+    target.total_open += summary.total_open
+
+
 @router.get("/repository/{owner}/{repo}/summary", response_model=AlertsSummaryResponse)
 async def get_repository_alerts_summary(
     owner: str,
@@ -382,6 +508,74 @@ async def get_repository_alerts_summary(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
+
+
+@router.get("/organization/{organization}/summary", response_model=OrgAlertsSummaryResponse)
+async def get_organization_alerts_summary(
+    organization: str,
+    token: str = Query(..., description="GitHub token"),
+    include_archived: bool = Query(False, description="Include archived repositories"),
+    include_forks: bool = Query(False, description="Include forked repositories"),
+    max_repos: int = Query(200, ge=1, le=1000, description="Max repositories to scan"),
+    max_concurrency: int = Query(8, ge=1, le=20, description="Max concurrent requests"),
+):
+    """
+    Get consolidated security alerts summary for an organization.
+    
+    Fetches per-repo summaries and aggregates totals.
+    """
+    try:
+        repos = await _list_org_repositories(
+            organization, token, include_archived, include_forks, max_repos
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list repositories: {e}"
+        )
+
+    response = OrgAlertsSummaryResponse(
+        organization=organization,
+        repos_scanned=len(repos),
+        summaries=[],
+        errors=[],
+        last_sync_at=datetime.now().isoformat(),
+    )
+
+    if not repos:
+        return response
+
+    semaphore = asyncio.Semaphore(max_concurrency)
+    summaries: list[AlertsSummary] = []
+
+    async def fetch_summary(repo_full: str):
+        async with semaphore:
+            try:
+                async with GitHubSecurityAlertsClient(token) as client:
+                    return await client.get_alerts_summary(repo_full)
+            except AlertsNotEnabledError as e:
+                response.errors.append({"repository": repo_full, "error": f"Not enabled: {e}"})
+            except AlertsAccessDeniedError as e:
+                response.errors.append({"repository": repo_full, "error": f"Access denied: {e}"})
+            except AlertsRateLimitError as e:
+                response.errors.append({"repository": repo_full, "error": f"Rate limited: {e}"})
+            except Exception as e:
+                response.errors.append({"repository": repo_full, "error": str(e)})
+            return None
+
+    tasks = [fetch_summary(repo_full) for repo_full in repos]
+    results = await asyncio.gather(*tasks)
+
+    for summary in results:
+        if not summary:
+            continue
+        summaries.append(summary)
+        response.summaries.append(_to_summary_response(summary))
+        _merge_totals(response, summary)
+        if summary.total_alerts > 0:
+            response.repos_with_alerts += 1
+
+    return response
 
 
 @router.get("/repository/{owner}/{repo}/dependabot")

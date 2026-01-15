@@ -45,7 +45,7 @@ Base = declarative_base()
 
 
 # PostgreSQL ENUM types - must match init-db.sql
-FindingTypeEnum = Enum('secret', 'vulnerability', 'sast', 'iac', 'history', name='finding_type', create_type=False)
+FindingTypeEnum = Enum('secret', 'vulnerability', 'sast', 'iac', 'history', 'bug', name='finding_type', create_type=False)
 SeverityLevelEnum = Enum('critical', 'high', 'medium', 'low', 'info', name='severity_level', create_type=False)
 RemediationStatusEnum = Enum('open', 'in_progress', 'resolved', 'false_positive', 'accepted_risk', name='remediation_status', create_type=False)
 ScanStatusEnum = Enum('pending', 'running', 'completed', 'failed', 'cancelled', name='scan_status', create_type=False)

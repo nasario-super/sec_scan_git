@@ -1,93 +1,85 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Shield,
   AlertTriangle,
   Package,
   Code,
   Key,
-  ExternalLink,
   RefreshCw,
   Filter,
   Loader2,
-  CheckCircle,
-  XCircle,
-  Clock,
 } from 'lucide-react';
-import { clsx } from 'clsx';
 import { useStore } from '../stores/useStore';
+import api from '../services/api';
 
 interface AlertSummary {
-  repository: string;
+  repository?: string;
+  organization?: string;
   dependabot_total: number;
   dependabot_critical: number;
   dependabot_high: number;
+  dependabot_medium: number;
+  dependabot_low: number;
   dependabot_open: number;
+  dependabot_fixed: number;
+  dependabot_dismissed: number;
   code_scanning_total: number;
   code_scanning_critical: number;
   code_scanning_high: number;
+  code_scanning_medium: number;
+  code_scanning_low: number;
   code_scanning_open: number;
+  code_scanning_fixed: number;
+  code_scanning_dismissed: number;
   secret_scanning_total: number;
   secret_scanning_open: number;
+  secret_scanning_resolved: number;
   total_alerts: number;
   total_critical: number;
   total_high: number;
   total_open: number;
 }
 
-interface ConsolidatedAlert {
-  id: string;
-  source: 'dependabot' | 'code_scanning' | 'secret_scanning';
-  number: number;
-  state: string;
-  severity: string;
-  title: string;
-  description?: string;
-  repository: string;
-  location?: string;
-  line_number?: number;
-  html_url: string;
-  created_at: string;
+interface OrgAlertsSummaryResponse extends AlertSummary {
+  organization: string;
+  repos_scanned: number;
+  repos_with_alerts: number;
+  summaries: AlertSummary[];
+  errors: { repository: string; error: string }[];
+  last_sync_at?: string;
 }
-
-const severityColors: Record<string, string> = {
-  critical: 'bg-severity-critical/20 text-severity-critical border-severity-critical/30',
-  high: 'bg-severity-high/20 text-severity-high border-severity-high/30',
-  medium: 'bg-severity-medium/20 text-severity-medium border-severity-medium/30',
-  low: 'bg-severity-low/20 text-severity-low border-severity-low/30',
-};
-
-const sourceIcons: Record<string, React.ElementType> = {
-  dependabot: Package,
-  code_scanning: Code,
-  secret_scanning: Key,
-};
-
-const sourceLabels: Record<string, string> = {
-  dependabot: 'Dependabot',
-  code_scanning: 'Code Scanning',
-  secret_scanning: 'Secret Scanning',
-};
-
-const sourceColors: Record<string, string> = {
-  dependabot: 'text-blue-400 bg-blue-400/10',
-  code_scanning: 'text-purple-400 bg-purple-400/10',
-  secret_scanning: 'text-red-400 bg-red-400/10',
-};
 
 export function SecurityAlerts() {
   const { scanSettings } = useStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [repository, setRepository] = useState('');
-  const [summary, setSummary] = useState<AlertSummary | null>(null);
-  const [alerts, setAlerts] = useState<ConsolidatedAlert[]>([]);
-  const [filterState, setFilterState] = useState<string>('all');
-  const [filterSeverity, setFilterSeverity] = useState<string>('all');
-  const [filterSource, setFilterSource] = useState<string>('all');
+  const [organizations, setOrganizations] = useState<string[]>([]);
+  const [organization, setOrganization] = useState('');
+  const [summary, setSummary] = useState<OrgAlertsSummaryResponse | null>(null);
+  const [filterQuery, setFilterQuery] = useState('');
+  const [onlyWithAlerts, setOnlyWithAlerts] = useState(true);
 
-  const fetchAlerts = async () => {
-    if (!repository || !scanSettings.githubToken) {
-      setError('Please enter a repository and ensure GitHub token is configured in Settings');
+  useEffect(() => {
+    const loadOrganizations = async () => {
+      try {
+        const orgs = await api.getOrganizations();
+        const normalized = (orgs || []).map((org: any) =>
+          typeof org === 'string' ? org : org?.name
+        ).filter(Boolean) as string[];
+        setOrganizations(normalized);
+        if (!organization && normalized.length) {
+          setOrganization(normalized[0]);
+        }
+      } catch {
+        // Ignore errors, allow manual input
+      }
+    };
+    loadOrganizations();
+  }, [organization]);
+
+  const fetchOrgAlerts = async () => {
+    if (!organization || !scanSettings.githubToken) {
+      setError('Configure o GitHub token e selecione a organização');
       return;
     }
 
@@ -95,49 +87,44 @@ export function SecurityAlerts() {
     setError(null);
 
     try {
-      const [owner, repo] = repository.split('/');
-      if (!owner || !repo) {
-        throw new Error('Invalid repository format. Use owner/repo');
-      }
-
-      // Fetch all alerts
       const response = await fetch(
-        `/api/alerts/repository/${owner}/${repo}/all?token=${encodeURIComponent(scanSettings.githubToken)}`
+        `/api/alerts/organization/${encodeURIComponent(organization)}/summary` +
+          `?token=${encodeURIComponent(scanSettings.githubToken)}&max_repos=200`
       );
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to fetch alerts');
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Falha ao buscar alertas');
       }
 
       const data = await response.json();
-      setAlerts(data.alerts || []);
-
-      // Fetch summary
-      const summaryResponse = await fetch(
-        `/api/alerts/repository/${owner}/${repo}/summary?token=${encodeURIComponent(scanSettings.githubToken)}`
-      );
-
-      if (summaryResponse.ok) {
-        const summaryData = await summaryResponse.json();
-        setSummary(summaryData);
-      }
+      setSummary(data);
     } catch (err: any) {
       setError(err.message);
-      setAlerts([]);
       setSummary(null);
     } finally {
       setLoading(false);
     }
   };
 
-  // Filter alerts
-  const filteredAlerts = alerts.filter((alert) => {
-    if (filterState !== 'all' && alert.state !== filterState) return false;
-    if (filterSeverity !== 'all' && alert.severity !== filterSeverity) return false;
-    if (filterSource !== 'all' && alert.source !== filterSource) return false;
-    return true;
-  });
+  const filteredSummaries = useMemo(() => {
+    if (!summary?.summaries?.length) return [];
+    const query = filterQuery.toLowerCase();
+    return summary.summaries
+      .filter((item) => {
+        if (onlyWithAlerts && item.total_alerts === 0) return false;
+        if (query && item.repository && !item.repository.toLowerCase().includes(query)) return false;
+        return true;
+      })
+      .sort((a, b) => b.total_alerts - a.total_alerts);
+  }, [summary, filterQuery, onlyWithAlerts]);
+
+  const mediumLowCount = summary
+    ? summary.dependabot_medium +
+      summary.dependabot_low +
+      summary.code_scanning_medium +
+      summary.code_scanning_low
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -146,33 +133,47 @@ export function SecurityAlerts() {
         <div>
           <h1 className="text-2xl font-bold text-gray-100 flex items-center gap-2">
             <Shield className="w-7 h-7 text-neon-blue" />
-            GitHub Security Alerts
+            Alertas de Segurança do GitHub
           </h1>
           <p className="text-gray-500 mt-1">
-            Consolidated view of Dependabot, Code Scanning, and Secret Scanning alerts
+            Visão centralizada de Dependabot, Code Scanning e Secret Scanning
           </p>
         </div>
       </div>
 
-      {/* Repository Input */}
+      {/* Organization Input */}
       <div className="card">
         <div className="flex flex-col md:flex-row gap-4">
           <div className="flex-1">
             <label className="block text-sm font-medium text-gray-400 mb-2">
-              Repository
+              Organização
             </label>
-            <input
-              type="text"
-              value={repository}
-              onChange={(e) => setRepository(e.target.value)}
-              placeholder="owner/repository"
-              className="input w-full"
-            />
+            {organizations.length > 0 ? (
+              <select
+                value={organization}
+                onChange={(e) => setOrganization(e.target.value)}
+                className="input w-full"
+              >
+                {organizations.map((org) => (
+                  <option key={org} value={org}>
+                    {org}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={organization}
+                onChange={(e) => setOrganization(e.target.value)}
+                placeholder="organization"
+                className="input w-full"
+              />
+            )}
           </div>
           <div className="flex items-end">
             <button
-              onClick={fetchAlerts}
-              disabled={loading || !repository}
+              onClick={fetchOrgAlerts}
+              disabled={loading || !organization}
               className="btn-primary flex items-center gap-2 h-10"
             >
               {loading ? (
@@ -180,13 +181,13 @@ export function SecurityAlerts() {
               ) : (
                 <RefreshCw className="w-4 h-4" />
               )}
-              Fetch Alerts
+              Atualizar Alertas
             </button>
           </div>
         </div>
         {!scanSettings.githubToken && (
           <p className="text-severity-medium text-sm mt-2">
-            ⚠️ GitHub token not configured. Go to Settings to add your token.
+            ⚠️ GitHub token não configurado. Configure na tela de Scans.
           </p>
         )}
       </div>
@@ -195,7 +196,7 @@ export function SecurityAlerts() {
       {error && (
         <div className="card border-severity-critical/30 bg-severity-critical/5">
           <div className="flex items-center gap-2 text-severity-critical">
-            <XCircle className="w-5 h-5" />
+            <AlertTriangle className="w-5 h-5" />
             <span>{error}</span>
           </div>
         </div>
@@ -212,7 +213,7 @@ export function SecurityAlerts() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-100">{summary.total_alerts}</p>
-                <p className="text-xs text-gray-500">Total Alerts</p>
+                <p className="text-xs text-gray-500">Total de Alertas</p>
               </div>
             </div>
           </div>
@@ -225,7 +226,7 @@ export function SecurityAlerts() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-100">{summary.dependabot_open}</p>
-                <p className="text-xs text-gray-500">Dependabot Open</p>
+                <p className="text-xs text-gray-500">Dependabot Abertos</p>
               </div>
             </div>
           </div>
@@ -238,7 +239,7 @@ export function SecurityAlerts() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-100">{summary.code_scanning_open}</p>
-                <p className="text-xs text-gray-500">Code Scanning Open</p>
+                <p className="text-xs text-gray-500">Code Scanning Abertos</p>
               </div>
             </div>
           </div>
@@ -251,7 +252,7 @@ export function SecurityAlerts() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-100">{summary.secret_scanning_open}</p>
-                <p className="text-xs text-gray-500">Secrets Open</p>
+                <p className="text-xs text-gray-500">Secret Scanning Abertos</p>
               </div>
             </div>
           </div>
@@ -264,235 +265,148 @@ export function SecurityAlerts() {
           <div className="card border-severity-critical/30 bg-severity-critical/5">
             <div className="text-center">
               <p className="text-3xl font-bold text-severity-critical">{summary.total_critical}</p>
-              <p className="text-sm text-gray-400">Critical</p>
+              <p className="text-sm text-gray-400">Crítico</p>
             </div>
           </div>
           <div className="card border-severity-high/30 bg-severity-high/5">
             <div className="text-center">
               <p className="text-3xl font-bold text-severity-high">{summary.total_high}</p>
-              <p className="text-sm text-gray-400">High</p>
+              <p className="text-sm text-gray-400">Alto</p>
             </div>
           </div>
           <div className="card border-severity-medium/30 bg-severity-medium/5">
             <div className="text-center">
               <p className="text-3xl font-bold text-severity-medium">
-                {(summary.dependabot_total - summary.dependabot_critical - summary.dependabot_high) + 
-                 (summary.code_scanning_total - summary.code_scanning_critical - summary.code_scanning_high)}
+                {mediumLowCount}
               </p>
-              <p className="text-sm text-gray-400">Medium/Low</p>
+              <p className="text-sm text-gray-400">Médio/Baixo</p>
             </div>
           </div>
           <div className="card border-neon-green/30 bg-neon-green/5">
             <div className="text-center">
               <p className="text-3xl font-bold text-neon-green">{summary.total_open}</p>
-              <p className="text-sm text-gray-400">Open</p>
+              <p className="text-sm text-gray-400">Abertos</p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Filters */}
-      {alerts.length > 0 && (
+      {summary && (
         <div className="card">
-          <div className="flex flex-wrap gap-4">
-            {/* State Filter */}
+          <div className="flex flex-col lg:flex-row lg:items-center gap-4 justify-between">
             <div>
-              <label className="block text-xs text-gray-500 mb-1">State</label>
-              <select
-                value={filterState}
-                onChange={(e) => setFilterState(e.target.value)}
-                className="input py-1 text-sm"
-              >
-                <option value="all">All States</option>
-                <option value="open">Open</option>
-                <option value="fixed">Fixed</option>
-                <option value="dismissed">Dismissed</option>
-              </select>
+              <h3 className="text-lg font-semibold text-gray-100">Controle por repositório</h3>
+              <p className="text-sm text-gray-500">
+                {summary.repos_with_alerts} repositórios com alertas • {summary.repos_scanned} analisados
+              </p>
             </div>
-
-            {/* Severity Filter */}
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Severity</label>
-              <select
-                value={filterSeverity}
-                onChange={(e) => setFilterSeverity(e.target.value)}
-                className="input py-1 text-sm"
-              >
-                <option value="all">All Severities</option>
-                <option value="critical">Critical</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </select>
-            </div>
-
-            {/* Source Filter */}
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Source</label>
-              <select
-                value={filterSource}
-                onChange={(e) => setFilterSource(e.target.value)}
-                className="input py-1 text-sm"
-              >
-                <option value="all">All Sources</option>
-                <option value="dependabot">Dependabot</option>
-                <option value="code_scanning">Code Scanning</option>
-                <option value="secret_scanning">Secret Scanning</option>
-              </select>
-            </div>
-
-            <div className="flex items-end">
-              <span className="text-sm text-gray-400">
-                Showing {filteredAlerts.length} of {alerts.length} alerts
-              </span>
+            <div className="flex flex-col md:flex-row gap-3">
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={filterQuery}
+                  onChange={(e) => setFilterQuery(e.target.value)}
+                  placeholder="Filtrar por repositório"
+                  className="input"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={onlyWithAlerts}
+                  onChange={(e) => setOnlyWithAlerts(e.target.checked)}
+                />
+                Somente com alertas
+              </label>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Alerts List */}
-      {alerts.length > 0 && (
-        <div className="card overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-cyber-border">
-                <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">Source</th>
-                <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">Severity</th>
-                <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">Alert</th>
-                <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">Location</th>
-                <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">State</th>
-                <th className="text-right py-3 px-4 text-gray-400 font-medium text-sm">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredAlerts.map((alert) => {
-                const SourceIcon = sourceIcons[alert.source] || AlertTriangle;
-                return (
-                  <tr
-                    key={alert.id}
-                    className="border-b border-cyber-border/50 hover:bg-cyber-surface/50 transition-colors"
-                  >
-                    {/* Source */}
-                    <td className="py-3 px-4">
-                      <div className={clsx(
-                        'inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs',
-                        sourceColors[alert.source]
-                      )}>
-                        <SourceIcon className="w-3 h-3" />
-                        {sourceLabels[alert.source]}
-                      </div>
-                    </td>
-
-                    {/* Severity */}
-                    <td className="py-3 px-4">
-                      <span className={clsx(
-                        'px-2 py-1 rounded text-xs font-medium border',
-                        severityColors[alert.severity]
-                      )}>
-                        {alert.severity}
-                      </span>
-                    </td>
-
-                    {/* Alert Info */}
-                    <td className="py-3 px-4">
-                      <div>
-                        <p className="font-medium text-gray-200 text-sm">
-                          #{alert.number} - {alert.title}
-                        </p>
-                        {alert.description && (
-                          <p className="text-xs text-gray-500 truncate max-w-md">
-                            {alert.description}
-                          </p>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Location */}
-                    <td className="py-3 px-4">
-                      {alert.location && (
-                        <code className="text-xs text-gray-400 bg-cyber-bg px-2 py-1 rounded">
-                          {alert.location}
-                          {alert.line_number && `:${alert.line_number}`}
-                        </code>
-                      )}
-                    </td>
-
-                    {/* State */}
-                    <td className="py-3 px-4">
-                      {alert.state === 'open' ? (
-                        <span className="flex items-center gap-1 text-severity-high text-xs">
-                          <Clock className="w-3 h-3" />
-                          Open
-                        </span>
-                      ) : alert.state === 'fixed' ? (
-                        <span className="flex items-center gap-1 text-neon-green text-xs">
-                          <CheckCircle className="w-3 h-3" />
-                          Fixed
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1 text-gray-500 text-xs">
-                          <XCircle className="w-3 h-3" />
-                          {alert.state}
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="py-3 px-4 text-right">
-                      <a
-                        href={alert.html_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-neon-blue hover:underline text-sm"
-                      >
-                        View
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-400">
+                  <th className="py-2">Repositório</th>
+                  <th className="py-2">Total</th>
+                  <th className="py-2">Crítico</th>
+                  <th className="py-2">Alto</th>
+                  <th className="py-2">Abertos</th>
+                  <th className="py-2">Dependabot</th>
+                  <th className="py-2">Code Scanning</th>
+                  <th className="py-2">Secret Scanning</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredSummaries.map((item) => (
+                  <tr key={item.repository} className="border-t border-cyber-border text-gray-200">
+                    <td className="py-2 pr-4">{item.repository}</td>
+                    <td className="py-2">{item.total_alerts}</td>
+                    <td className="py-2">{item.total_critical}</td>
+                    <td className="py-2">{item.total_high}</td>
+                    <td className="py-2">{item.total_open}</td>
+                    <td className="py-2">{item.dependabot_total}</td>
+                    <td className="py-2">{item.code_scanning_total}</td>
+                    <td className="py-2">{item.secret_scanning_total}</td>
+                  </tr>
+                ))}
+                {filteredSummaries.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="py-4 text-center text-gray-500">
+                      Nenhum repositório com alertas encontrado.
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-
-          {filteredAlerts.length === 0 && (
-            <div className="text-center py-12">
-              <Filter className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-              <p className="text-gray-400">No alerts match the current filters</p>
-            </div>
-          )}
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
+      {summary?.errors?.length ? (
+        <div className="card border-severity-medium/30 bg-severity-medium/5">
+          <div className="flex items-center gap-2 text-severity-medium mb-2">
+            <AlertTriangle className="w-5 h-5" />
+            <span>Alguns repositórios não possuem Security Alerts habilitados ou acesso negado.</span>
+          </div>
+          <div className="text-xs text-gray-500 space-y-1">
+            {summary.errors.slice(0, 10).map((err) => (
+              <div key={`${err.repository}-${err.error}`}>{err.repository}: {err.error}</div>
+            ))}
+            {summary.errors.length > 10 && (
+              <div>... e mais {summary.errors.length - 10} erros</div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
       {/* Empty State */}
-      {!loading && alerts.length === 0 && !error && (
+      {!loading && !summary && !error && (
         <div className="card text-center py-12">
           <Shield className="w-16 h-16 text-gray-600 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-300 mb-2">
-            No Alerts Loaded
+            Nenhum alerta carregado
           </h3>
           <p className="text-gray-500 max-w-md mx-auto">
-            Enter a repository name above and click "Fetch Alerts" to view 
-            GitHub Security Alerts including Dependabot, Code Scanning, and Secret Scanning.
+            Selecione uma organização e clique em "Atualizar Alertas" para centralizar os resultados.
           </p>
         </div>
       )}
 
       {/* Info Box */}
       <div className="card border-neon-blue/30 bg-neon-blue/5">
-        <h3 className="font-medium text-neon-blue mb-2">ℹ️ About GitHub Security Alerts</h3>
+        <h3 className="font-medium text-neon-blue mb-2">ℹ️ Sobre os Alertas de Segurança do GitHub</h3>
         <div className="text-sm text-gray-400 space-y-2">
           <p>
-            <strong className="text-blue-400">Dependabot:</strong> Alerts for vulnerable dependencies 
-            in your package files (package.json, requirements.txt, etc.)
+            <strong className="text-blue-400">Dependabot:</strong> Alertas de dependências vulneráveis
+            em arquivos como package.json, requirements.txt, etc.
           </p>
           <p>
-            <strong className="text-purple-400">Code Scanning:</strong> SAST findings from CodeQL 
-            or other code analysis tools configured in your repository.
+            <strong className="text-purple-400">Code Scanning:</strong> Findings SAST do CodeQL
+            ou outras ferramentas configuradas no repositório.
           </p>
           <p>
-            <strong className="text-red-400">Secret Scanning:</strong> Exposed secrets like API keys, 
-            tokens, and passwords detected by GitHub.
+            <strong className="text-red-400">Secret Scanning:</strong> Segredos expostos como API keys,
+            tokens e senhas detectadas pelo GitHub.
           </p>
         </div>
       </div>

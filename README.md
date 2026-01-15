@@ -21,6 +21,7 @@ Uma ferramenta completa e profissional para análise de segurança automatizada 
 - **Findings**: Lista filtrada de vulnerabilidades encontradas
 - **Scans**: Histórico e execução de novos scans
 - **Repositories**: Visão por repositório
+- **Security Alerts**: Dashboard centralizado de alertas do GitHub (org-wide)
 - **Trends**: Gráficos de evolução temporal
 - **History**: Timeline de atividades
 - **Export CSV**: Exportação de dados
@@ -75,7 +76,7 @@ open http://localhost
 
 1. Acesse http://localhost
 2. Faça login com `admin` / `admin`
-3. Vá para **Scans** → **New Scan**
+3. Vá para **Scans** → **New Scan** e configure o **GitHub Token**
 4. Insira sua organização GitHub e token
 5. Escolha o modo de scan:
    - **API Only**: Mais rápido, sem clone (recomendado)
@@ -105,6 +106,14 @@ curl -X POST http://localhost/api/scans \
 curl http://localhost/api/findings \
   -H "Authorization: Bearer <TOKEN>"
 ```
+
+### Security Alerts (GitHub)
+Para visualizar o **Dashboard centralizado de Security Alerts**, é necessário habilitar os recursos no GitHub:
+- **Dependabot alerts**
+- **Code Scanning**
+- **Secret Scanning**
+
+Sem isso, o GitHub retornará “Access denied / Not enabled” e a ferramenta exibirá esses avisos na tela.
 
 ### Via CLI
 
@@ -238,6 +247,13 @@ sec_scan_git/
 | GET | `/api/trends` | Dados de tendência |
 | GET | `/api/history` | Histórico de atividades |
 | GET | `/api/repositories` | Lista de repositórios |
+
+### Security Alerts (GitHub)
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/alerts/organization/{org}/summary` | Resumo centralizado por organização |
+| GET | `/api/alerts/repository/{owner}/{repo}/summary` | Resumo por repositório |
+| GET | `/api/alerts/repository/{owner}/{repo}/all` | Lista consolidada de alertas |
 
 ## 🔍 Tipos de Findings
 

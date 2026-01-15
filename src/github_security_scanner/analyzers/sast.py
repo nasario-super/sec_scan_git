@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from rich.console import Console
+
+console = Console()
 
 from ..core.config import Settings
 from ..core.models import (
@@ -340,9 +343,11 @@ class SASTAnalyzer(BaseAnalyzer):
     def _load_rules(self) -> list[SASTRule]:
         """Load and compile SAST rules."""
         rules = DEFAULT_RULES.copy()
+        console.print(f"[cyan]SAST: Loading rules, {len(DEFAULT_RULES)} default rules[/cyan]")
 
         # Try to load custom rules
         rules_file = Path(self.settings.analyzers.sast_rules_file)
+        console.print(f"[cyan]SAST: Looking for rules file at: {rules_file.absolute()} (exists: {rules_file.exists()})[/cyan]")
         if rules_file.exists():
             try:
                 with open(rules_file) as f:
@@ -381,13 +386,25 @@ class SASTAnalyzer(BaseAnalyzer):
             List of findings
         """
         findings: list[Finding] = []
-        self.log_info(f"Running SAST analysis on {repo.name}...")
+        console.print(f"[bold yellow]🔍 SAST: Starting analysis on {repo.name}...[/bold yellow]")
+        console.print(f"[cyan]SAST: Loaded {len(self.rules)} rules[/cyan]")
 
-        for file_path in self.iter_files(repo_path):
-            file_findings = self._analyze_file(file_path, repo, repo_path)
-            findings.extend(file_findings)
+        file_count = 0
+        try:
+            for file_path in self.iter_files(repo_path):
+                file_count += 1
+                try:
+                    file_findings = self._analyze_file(file_path, repo, repo_path)
+                    findings.extend(file_findings)
+                except Exception as e:
+                    console.print(f"[red]SAST Error analyzing {file_path}: {e}[/red]")
+                    continue
+        except Exception as e:
+            console.print(f"[red]SAST Error iterating files: {e}[/red]")
+            import traceback
+            traceback.print_exc()
 
-        self.log_info(f"Found {len(findings)} SAST issues in {repo.name}")
+        console.print(f"[bold green]✅ SAST: Analyzed {file_count} files, found {len(findings)} issues in {repo.name}[/bold green]")
         return findings
 
     def _get_file_language(self, file_path: Path) -> Optional[str]:
@@ -432,8 +449,8 @@ class SASTAnalyzer(BaseAnalyzer):
 
                     before, after = self.get_context_lines(lines, line_num)
                     finding = Finding(
-                        repository=repo.name,
-                        type=FindingType.BUG,
+                        repository=repo.full_name,
+                        type=FindingType.SAST,
                         category=rule.id.split("/")[-1],
                         severity=rule.severity,
                         states=[FindingState.ACTIVE],

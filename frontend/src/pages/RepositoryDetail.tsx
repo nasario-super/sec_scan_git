@@ -203,13 +203,9 @@ function FindingRow({ finding, expanded, onToggle, onStatusUpdate }: {
 }
 
 export function RepositoryDetail() {
-  const params = useParams<{ owner: string; repo: string }>();
-  const { owner, repo } = params;
+  const { owner, repo } = useParams<{ owner: string; repo: string }>();
   const navigate = useNavigate();
-  const { addNotification } = useStore();
-  
-  // Debug: Log params to console
-  console.log('RepositoryDetail params:', { owner, repo, fullParams: params });
+  const { addNotification, scanSettings } = useStore();
   
   const [stats, setStats] = useState<RepositoryStats | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -311,12 +307,12 @@ export function RepositoryDetail() {
   };
 
   const handleRescan = async () => {
-    const token = localStorage.getItem('github_token');
+    const token = scanSettings.githubToken;
     if (!token) {
       addNotification({
         type: 'error',
         title: 'Token Required',
-        message: 'Please configure your GitHub token in Settings',
+        message: 'Please configure your GitHub token in Scans page before starting a scan',
       });
       return;
     }
@@ -577,7 +573,7 @@ export function RepositoryDetail() {
           </h3>
           {severityChartData.length > 0 ? (
             <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                 <PieChart>
                   <Pie
                     data={severityChartData}
@@ -626,7 +622,7 @@ export function RepositoryDetail() {
           </h3>
           {typeChartData.length > 0 ? (
             <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                 <BarChart data={typeChartData} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" horizontal={false} />
                   <XAxis type="number" stroke="#6b7280" fontSize={12} tickFormatter={(v) => v.toLocaleString()} />

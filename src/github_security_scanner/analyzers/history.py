@@ -197,7 +197,7 @@ class HistoryAnalyzer(BaseAnalyzer):
         )
 
         return Finding(
-            repository=repo.name,
+            repository=repo.full_name,
             type=FindingType.SECRET,
             category=pattern.name,
             severity=pattern.severity,

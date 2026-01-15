@@ -12,7 +12,7 @@ CREATE EXTENSION IF NOT EXISTS "pg_trgm";  -- For text search
 -- =============================================================================
 
 CREATE TYPE severity_level AS ENUM ('critical', 'high', 'medium', 'low', 'info');
-CREATE TYPE finding_type AS ENUM ('secret', 'vulnerability', 'sast', 'iac', 'history');
+CREATE TYPE finding_type AS ENUM ('secret', 'vulnerability', 'sast', 'iac', 'history', 'bug');
 CREATE TYPE remediation_status AS ENUM ('open', 'in_progress', 'resolved', 'false_positive', 'accepted_risk');
 CREATE TYPE scan_status AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled');
 

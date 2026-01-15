@@ -491,8 +491,8 @@ class IaCAnalyzer(BaseAnalyzer):
     ) -> Finding:
         """Create a finding from an IaC check match."""
         return Finding(
-            repository=repo.name,
-            type=FindingType.MISCONFIG,
+            repository=repo.full_name,
+            type=FindingType.IAC,
             category=check.id.split("/")[-1],
             severity=check.severity,
             states=[FindingState.ACTIVE],

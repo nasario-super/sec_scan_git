@@ -229,7 +229,7 @@ export function Trends() {
           </div>
         ) : (
           <div className="h-96">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
               {chartType === 'line' ? (
                 <LineChart data={trends}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -367,7 +367,7 @@ export function Trends() {
         <div className="card">
           <h2 className="text-lg font-semibold text-gray-100 mb-4">Resolved vs New Findings</h2>
           <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
               <AreaChart data={trends}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                 <XAxis

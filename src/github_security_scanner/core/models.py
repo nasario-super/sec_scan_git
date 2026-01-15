@@ -40,6 +40,9 @@ class FindingType(str, Enum):
 
     SECRET = "secret"
     VULNERABILITY = "vulnerability"
+    SAST = "sast"
+    IAC = "iac"
+    HISTORY = "history"
     BUG = "bug"
     MISCONFIG = "misconfig"
 
@@ -350,6 +353,11 @@ class ScanResult:
         # Update repository findings count
         if finding.repository in self.repositories:
             self.repositories[finding.repository].findings_count += 1
+        else:
+            # Handle full_name vs name mismatches
+            short_name = finding.repository.split("/")[-1] if "/" in finding.repository else None
+            if short_name and short_name in self.repositories:
+                self.repositories[short_name].findings_count += 1
 
     def calculate_top_repos(self, limit: int = 10) -> None:
         """Calculate top affected repositories."""

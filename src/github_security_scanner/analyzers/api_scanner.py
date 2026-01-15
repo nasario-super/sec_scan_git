@@ -1014,7 +1014,7 @@ class APIScanner:
                             
                             finding = Finding(
                                 repository=result.repository,
-                                type=FindingType.BUG,
+                                type=FindingType.SAST,
                                 category=matching_rule.id.split("/")[-1],
                                 severity=matching_rule.severity,
                                 states=[FindingState.ACTIVE],

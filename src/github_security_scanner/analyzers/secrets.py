@@ -412,7 +412,7 @@ class SecretsAnalyzer(BaseAnalyzer):
                     # Create finding
                     before, after = self.get_context_lines(lines, line_num)
                     finding = Finding(
-                        repository=repo.name,
+                        repository=repo.full_name,
                         type=FindingType.SECRET,
                         category=pattern.name,
                         severity=pattern.severity,

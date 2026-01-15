@@ -432,7 +432,7 @@ class VulnerabilityAnalyzer(BaseAnalyzer):
         remediation = f"Upgrade {package} to version {fixed_version}" if fixed_version else f"Check for updates to {package}"
 
         return Finding(
-            repository=repo.name,
+            repository=repo.full_name,
             type=FindingType.VULNERABILITY,
             category=f"{ecosystem}_dependency",
             severity=severity,
