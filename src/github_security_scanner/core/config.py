@@ -111,6 +111,19 @@ class AnalyzerSettings(BaseSettings):
     iac_checks_file: str = Field(default="patterns/iac_checks.yaml", description="IaC checks file")
 
 
+class AISettings(BaseSettings):
+    """AI configuration for triage and prioritization."""
+
+    enabled: bool = Field(default=False, description="Enable AI triage")
+    provider: str = Field(default="openai", description="AI provider name")
+    api_url: str = Field(default="https://api.openai.com/v1", description="OpenAI-compatible API URL")
+    api_key: str = Field(default="", description="API key for AI provider")
+    model: str = Field(default="gpt-4o-mini", description="Model name")
+    timeout: int = Field(default=20, description="AI request timeout in seconds")
+    max_tokens: int = Field(default=200, description="Max tokens for AI response")
+    temperature: float = Field(default=0.0, description="Model temperature")
+
+
 class OutputSettings(BaseSettings):
     """Output configuration."""
 
@@ -174,6 +187,7 @@ class Settings(BaseSettings):
     github: GitHubSettings = Field(default_factory=GitHubSettings)
     scan: ScanSettings = Field(default_factory=ScanSettings)
     analyzers: AnalyzerSettings = Field(default_factory=AnalyzerSettings)
+    ai: AISettings = Field(default_factory=AISettings)
     output: OutputSettings = Field(default_factory=OutputSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)

@@ -387,6 +387,7 @@ class SecretsAnalyzer(BaseAnalyzer):
         findings: list[Finding] = []
         relative_path = self.get_relative_path(file_path, repo_path)
         lines = self.read_file_lines(file_path)
+        is_noise = self.is_noise_path(file_path)
 
         for pattern in self.patterns:
             # Check file pattern restrictions
@@ -411,6 +412,14 @@ class SecretsAnalyzer(BaseAnalyzer):
 
                     # Create finding
                     before, after = self.get_context_lines(lines, line_num)
+                    confidence = pattern.confidence * (0.6 if is_noise else 1.0)
+                    false_positive = (
+                        FalsePositiveLikelihood.HIGH
+                        if is_noise
+                        else FalsePositiveLikelihood.LOW
+                        if is_hardcoded
+                        else FalsePositiveLikelihood.MEDIUM
+                    )
                     finding = Finding(
                         repository=repo.full_name,
                         type=FindingType.SECRET,
@@ -427,11 +436,8 @@ class SecretsAnalyzer(BaseAnalyzer):
                         column_start=match.start(),
                         column_end=match.end(),
                         branch=repo.default_branch,
-                        confidence=pattern.confidence,
-                        false_positive_likelihood=(
-                            FalsePositiveLikelihood.LOW if is_hardcoded
-                            else FalsePositiveLikelihood.MEDIUM
-                        ),
+                        confidence=confidence,
+                        false_positive_likelihood=false_positive,
                         remediation=pattern.remediation,
                         references=pattern.references,
                         rule_id=f"secrets/{pattern.name}",

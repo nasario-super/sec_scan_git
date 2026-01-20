@@ -20,6 +20,40 @@ export type RemediationStatus =
   | 'false_positive' 
   | 'accepted_risk';
 
+// AI triage
+export type AITriageLabel = 'likely_true_positive' | 'false_positive' | 'needs_review';
+
+export interface AITriageResult {
+  label: AITriageLabel;
+  confidence: number;
+  reasons: string[];
+  source: 'llm' | 'heuristic';
+}
+
+export interface AITriageResponse {
+  finding_id: string;
+  result: AITriageResult;
+}
+
+export interface AITriageBatchResponse {
+  results: Record<string, AITriageResult>;
+  failed: string[];
+}
+
+export type SecretValidationStatus = 'valid' | 'invalid' | 'unknown';
+
+export interface SecretValidationResult {
+  status: SecretValidationStatus;
+  provider: string;
+  message: string;
+  checked_at: string;
+}
+
+export interface SecretValidationResponse {
+  finding_id: string;
+  result: SecretValidationResult;
+}
+
 // Scan status
 export type ScanStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -44,6 +78,7 @@ export interface Finding {
   remediation_status: RemediationStatus;
   remediation_notes?: string;
   false_positive_likelihood?: 'low' | 'medium' | 'high';
+  ai_triage?: AITriageResult | null;
   created_at: string;
   updated_at: string;
 }
@@ -110,6 +145,12 @@ export interface DashboardStats {
     sast: number;
     iac: number;
     history: number;
+  };
+  ai_triage_counts?: {
+    likely_true_positive: number;
+    false_positive: number;
+    needs_review: number;
+    untriaged: number;
   };
   recent_scans: Scan[];
   top_repositories: Array<{

@@ -17,6 +17,7 @@ from sqlalchemy import (
     Column,
     String,
     Integer,
+    Float,
     DateTime,
     Text,
     Boolean,
@@ -26,6 +27,7 @@ from sqlalchemy import (
     case,
     TypeDecorator,
     Enum,
+    or_,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY
 from sqlalchemy.ext.declarative import declarative_base
@@ -129,6 +131,11 @@ class FindingModel(Base):
     remediation_notes = Column(Text)
     remediation_deadline = Column(DateTime(timezone=True))
     assigned_to = Column(String)
+    ai_label = Column(String)
+    ai_confidence = Column(Float)
+    ai_reasons = Column(JSON)
+    ai_source = Column(String)
+    ai_updated_at = Column(DateTime(timezone=True))
     first_seen_at = Column(DateTime(timezone=True), default=func.now())
     last_seen_at = Column(DateTime(timezone=True), default=func.now())
     resolved_at = Column(DateTime(timezone=True))
@@ -379,12 +386,11 @@ class DatabasePostgres:
         Returns:
             Finding ID if saved (None if duplicate)
         """
-        import hashlib
-        
         with self._session() as session:
             # Generate fingerprint
-            content = f"{finding.repository}:{finding.type.value}:{finding.category}:{finding.file_path}:{finding.line_content[:100] if finding.line_content else ''}"
-            fingerprint = hashlib.sha256(content.encode()).hexdigest()[:32]
+            from ..utils.fingerprint import build_finding_fingerprint
+            
+            fingerprint = build_finding_fingerprint(finding)
             
             # Get or create repository
             repo = session.query(RepositoryModel).filter_by(full_name=finding.repository).first()
@@ -508,11 +514,10 @@ class DatabasePostgres:
     
     def _save_finding(self, session: Session, finding: Finding, scan_id: str, org_id: str) -> None:
         """Save a single finding."""
-        import hashlib
-        
         # Generate fingerprint
-        content = f"{finding.repository}:{finding.type.value}:{finding.category}:{finding.file_path}:{finding.line_content[:100] if finding.line_content else ''}"
-        fingerprint = hashlib.sha256(content.encode()).hexdigest()[:32]
+        from ..utils.fingerprint import build_finding_fingerprint
+        
+        fingerprint = build_finding_fingerprint(finding)
         
         # Get or create repository to get repository_id
         repo = session.query(RepositoryModel).filter_by(full_name=finding.repository).first()
@@ -693,13 +698,56 @@ class DatabasePostgres:
                     states=",".join(f.states) if f.states else "",
                     file_path=f.file_path,
                     line_number=f.line_number,
+                    line_content=f.line_content or "",
                     rule_id=f.rule_id,
+                    rule_description=f.rule_description or "",
                     status=self._pg_to_remediation_status(f.status),
                     first_seen_date=f.first_seen_at or datetime.now(),
                     last_seen_date=f.last_seen_at or datetime.now(),
+                    ai_label=f.ai_label or "",
+                    ai_confidence=f.ai_confidence or 0.0,
+                    ai_reasons=f.ai_reasons or [],
+                    ai_source=f.ai_source or "",
+                    ai_updated_at=f.ai_updated_at,
+                    confidence=0.0,
                 )
                 for f, repo in results
             ]
+
+    def get_finding_by_id(self, finding_id: str) -> Optional[FindingRecord]:
+        """Get a single finding by ID."""
+        with self._session() as session:
+            result = session.query(FindingModel, RepositoryModel).join(
+                RepositoryModel, FindingModel.repository_id == RepositoryModel.id, isouter=True
+            ).filter(FindingModel.id == finding_id).first()
+            
+            if not result:
+                return None
+            
+            f, repo = result
+            return FindingRecord(
+                id=str(f.id),
+                scan_id=str(f.scan_id) if f.scan_id else None,
+                repository=repo.full_name if repo else "",
+                finding_type=f.finding_type,
+                category=f.category,
+                severity=f.severity,
+                states=",".join(f.states) if f.states else "",
+                file_path=f.file_path,
+                line_number=f.line_number,
+                line_content=f.line_content or "",
+                rule_id=f.rule_id,
+                rule_description=f.rule_description or "",
+                status=self._pg_to_remediation_status(f.status),
+                first_seen_date=f.first_seen_at or datetime.now(),
+                last_seen_date=f.last_seen_at or datetime.now(),
+                ai_label=f.ai_label or "",
+                ai_confidence=f.ai_confidence or 0.0,
+                ai_reasons=f.ai_reasons or [],
+                ai_source=f.ai_source or "",
+                ai_updated_at=f.ai_updated_at,
+                confidence=0.0,
+            )
     
     def _pg_to_remediation_status(self, pg_status: str) -> RemediationStatus:
         """Convert PostgreSQL status enum to Python RemediationStatus."""
@@ -748,6 +796,29 @@ class DatabasePostgres:
                 )
                 for f, repo in results
             ]
+
+    def update_finding_ai_triage(
+        self,
+        finding_id: str,
+        ai_label: str,
+        ai_confidence: float,
+        ai_reasons: list[str],
+        ai_source: str,
+    ) -> bool:
+        """Persist AI triage data for a finding."""
+        with self._session() as session:
+            finding = session.query(FindingModel).filter_by(id=finding_id).first()
+            if not finding:
+                return False
+            
+            now = datetime.now()
+            finding.ai_label = ai_label
+            finding.ai_confidence = ai_confidence
+            finding.ai_reasons = ai_reasons
+            finding.ai_source = ai_source
+            finding.ai_updated_at = now
+            finding.updated_at = now
+            return True
     
     def update_finding_status(
         self,
@@ -985,6 +1056,22 @@ class DatabasePostgres:
             )
             type_dict = {row.finding_type: row.count for row in type_counts}
             
+            # AI triage counts
+            total_findings = session.query(func.count(FindingModel.id)).scalar() or 0
+            ai_counts_rows = (
+                session.query(
+                    FindingModel.ai_label,
+                    func.count(FindingModel.id).label("count")
+                )
+                .filter(FindingModel.ai_label.isnot(None))
+                .filter(FindingModel.ai_label != "")
+                .group_by(FindingModel.ai_label)
+                .all()
+            )
+            ai_counts = {row.ai_label: row.count for row in ai_counts_rows}
+            ai_labeled_total = sum(ai_counts.values())
+            ai_counts["untriaged"] = max(0, total_findings - ai_labeled_total)
+            
             # Total repositories (from repositories table for better accuracy)
             total_repos = session.query(func.count(RepositoryModel.id)).scalar() or 0
             
@@ -1000,6 +1087,7 @@ class DatabasePostgres:
                 "status_counts": status_dict,
                 "severity_counts": severity_dict,
                 "type_counts": type_dict,
+                "ai_triage_counts": ai_counts,
                 "average_findings_per_scan": round(float(avg_findings), 1),
                 "open_findings": status_dict.get("open", 0),
                 "fixed_findings": status_dict.get("resolved", 0),
@@ -1159,6 +1247,16 @@ class DatabasePostgres:
                         "rule_description": f.rule_description,
                         "matched_pattern": f.matched_pattern,
                         "false_positive_likelihood": f.false_positive_likelihood,
+                        "ai_triage": (
+                            {
+                                "label": f.ai_label,
+                                "confidence": f.ai_confidence,
+                                "reasons": f.ai_reasons,
+                                "source": f.ai_source,
+                            }
+                            if f.ai_label
+                            else None
+                        ),
                         "created_at": f.created_at.isoformat() if f.created_at else None,
                         "updated_at": f.updated_at.isoformat() if f.updated_at else None,
                     }
@@ -1168,4 +1266,100 @@ class DatabasePostgres:
                 "page": page,
                 "page_size": page_size,
                 "total_pages": (total + page_size - 1) // page_size,
+            }
+
+    def get_findings_paginated_all(
+        self,
+        scan_id: Optional[str] = None,
+        repository: Optional[str] = None,
+        status: Optional[RemediationStatus] = None,
+        severity: Optional[str | list[str]] = None,
+        finding_type: Optional[str | list[str]] = None,
+        category: Optional[str] = None,
+        search: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict:
+        """Get paginated findings across all repositories with filters."""
+        with self._session() as session:
+            query = session.query(FindingModel, RepositoryModel).join(
+                RepositoryModel, FindingModel.repository_id == RepositoryModel.id, isouter=True
+            )
+            
+            if scan_id:
+                query = query.filter(FindingModel.scan_id == scan_id)
+            if repository:
+                query = query.filter(RepositoryModel.full_name == repository)
+            if status:
+                query = query.filter(FindingModel.status == status.value)
+            if severity:
+                if isinstance(severity, list):
+                    query = query.filter(FindingModel.severity.in_(severity))
+                else:
+                    query = query.filter(FindingModel.severity == severity)
+            if finding_type:
+                if isinstance(finding_type, list):
+                    query = query.filter(FindingModel.finding_type.in_(finding_type))
+                else:
+                    query = query.filter(FindingModel.finding_type == finding_type)
+            if category:
+                query = query.filter(FindingModel.category == category)
+            if search:
+                like = f"%{search}%"
+                query = query.filter(
+                    or_(
+                        RepositoryModel.full_name.ilike(like),
+                        FindingModel.category.ilike(like),
+                        FindingModel.file_path.ilike(like),
+                        FindingModel.line_content.ilike(like),
+                        FindingModel.rule_id.ilike(like),
+                    )
+                )
+            
+            total = query.count()
+            
+            query = query.order_by(
+                case(
+                    (FindingModel.severity == "critical", 1),
+                    (FindingModel.severity == "high", 2),
+                    (FindingModel.severity == "medium", 3),
+                    else_=4,
+                ),
+                FindingModel.created_at.desc(),
+            ).offset((page - 1) * page_size).limit(page_size)
+            
+            results = query.all()
+            items = [
+                FindingRecord(
+                    id=str(f.id),
+                    scan_id=str(f.scan_id) if f.scan_id else None,
+                    repository=repo.full_name if repo else "",
+                    finding_type=f.finding_type,
+                    category=f.category,
+                    severity=f.severity,
+                    states=",".join(f.states) if f.states else "",
+                    file_path=f.file_path,
+                    line_number=f.line_number,
+                    line_content=f.line_content or "",
+                    rule_id=f.rule_id,
+                    rule_description=f.rule_description or "",
+                    status=self._pg_to_remediation_status(f.status),
+                    first_seen_date=f.first_seen_at or datetime.now(),
+                    last_seen_date=f.last_seen_at or datetime.now(),
+                    ai_label=f.ai_label or "",
+                    ai_confidence=f.ai_confidence or 0.0,
+                    ai_reasons=f.ai_reasons or [],
+                    ai_source=f.ai_source or "",
+                    ai_updated_at=f.ai_updated_at,
+                    confidence=0.0,
+                )
+                for f, repo in results
+            ]
+            
+            return {
+                "items": items,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": max(1, (total + page_size - 1) // page_size),
             }

@@ -426,6 +426,7 @@ class SASTAnalyzer(BaseAnalyzer):
         relative_path = self.get_relative_path(file_path, repo_path)
         file_language = self._get_file_language(file_path)
         lines = self.read_file_lines(file_path)
+        is_noise = self.is_noise_path(file_path)
 
         for rule in self.rules:
             # Skip if rule doesn't apply to this language
@@ -448,6 +449,12 @@ class SASTAnalyzer(BaseAnalyzer):
                         continue
 
                     before, after = self.get_context_lines(lines, line_num)
+                    confidence = rule.confidence * (0.6 if is_noise else 1.0)
+                    false_positive = (
+                        FalsePositiveLikelihood.HIGH
+                        if is_noise
+                        else FalsePositiveLikelihood.MEDIUM
+                    )
                     finding = Finding(
                         repository=repo.full_name,
                         type=FindingType.SAST,
@@ -463,8 +470,8 @@ class SASTAnalyzer(BaseAnalyzer):
                         column_start=match.start(),
                         column_end=match.end(),
                         branch=repo.default_branch,
-                        confidence=rule.confidence,
-                        false_positive_likelihood=FalsePositiveLikelihood.MEDIUM,
+                        confidence=confidence,
+                        false_positive_likelihood=false_positive,
                         remediation=rule.remediation,
                         references=rule.references,
                         rule_id=rule.id,

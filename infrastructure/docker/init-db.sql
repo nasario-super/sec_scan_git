@@ -131,6 +131,13 @@ CREATE TABLE findings (
     remediation_deadline TIMESTAMP WITH TIME ZONE,
     assigned_to VARCHAR(255),
     
+    -- AI triage (optional)
+    ai_label VARCHAR(50),
+    ai_confidence REAL,
+    ai_reasons JSONB,
+    ai_source VARCHAR(50),
+    ai_updated_at TIMESTAMP WITH TIME ZONE,
+    
     -- Tracking
     first_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),

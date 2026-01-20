@@ -27,6 +27,8 @@ from ..core.config import Settings, get_settings
 from ..core.scanner import SecurityScanner
 from ..storage.database import Database
 from ..storage.postgres_database import DatabasePostgres
+from ..utils.ai_triage import triage_finding
+from ..utils.secret_validation import validate_secret_for_finding
 from ..storage.models import RemediationStatus
 from .security import (
     AUTH_ENABLED,
@@ -95,6 +97,14 @@ class ScanSummary(BaseModel):
     error_message: Optional[str] = None
 
 
+class AITriageResult(BaseModel):
+    """AI triage result for a finding."""
+    label: str
+    confidence: float
+    reasons: list[str]
+    source: str
+
+
 class FindingSummary(BaseModel):
     """Summary of a finding - matches frontend Finding interface."""
     id: str
@@ -118,6 +128,38 @@ class FindingSummary(BaseModel):
     false_positive_likelihood: Optional[str] = None
     created_at: str = ""
     updated_at: str = ""
+    ai_triage: Optional[AITriageResult] = None
+
+
+class AITriageResponse(BaseModel):
+    """AI triage response for a finding."""
+    finding_id: str
+    result: AITriageResult
+
+
+class AITriageBatchRequest(BaseModel):
+    """Batch AI triage request."""
+    finding_ids: list[str] = Field(default_factory=list)
+
+
+class AITriageBatchResponse(BaseModel):
+    """Batch AI triage response."""
+    results: dict[str, AITriageResult] = Field(default_factory=dict)
+    failed: list[str] = Field(default_factory=list)
+
+
+class SecretValidationResult(BaseModel):
+    """Secret validation result."""
+    status: str
+    provider: str
+    message: str
+    checked_at: str
+
+
+class SecretValidationResponse(BaseModel):
+    """Secret validation response."""
+    finding_id: str
+    result: SecretValidationResult
 
 
 class PaginatedFindings(BaseModel):
@@ -156,6 +198,14 @@ class FindingTypeCount(BaseModel):
     history: int = 0
 
 
+class AITriageCounts(BaseModel):
+    """AI triage counts."""
+    likely_true_positive: int = 0
+    false_positive: int = 0
+    needs_review: int = 0
+    untriaged: int = 0
+
+
 class RepoFindingCount(BaseModel):
     """Repository finding count."""
     name: str
@@ -179,6 +229,7 @@ class DashboardStats(BaseModel):
     resolved_findings: int = 0
     findings_by_severity: SeverityCount = SeverityCount()
     findings_by_type: FindingTypeCount = FindingTypeCount()
+    ai_triage_counts: AITriageCounts = AITriageCounts()
     recent_scans: list[ScanSummaryBrief] = []
     top_repositories: list[RepoFindingCount] = []
 
@@ -386,6 +437,7 @@ async def get_dashboard(
     status_counts = stats.get("status_counts", {})
     severity_counts = stats.get("severity_counts", {})
     type_counts = stats.get("type_counts", {})
+    ai_counts = stats.get("ai_triage_counts", {})
     
     # Get total findings
     total_findings = sum(severity_counts.values()) if severity_counts else 0
@@ -408,6 +460,12 @@ async def get_dashboard(
             sast=type_counts.get("sast", 0),
             iac=type_counts.get("iac", 0),
             history=type_counts.get("history", 0),
+        ),
+        ai_triage_counts=AITriageCounts(
+            likely_true_positive=ai_counts.get("likely_true_positive", 0),
+            false_positive=ai_counts.get("false_positive", 0),
+            needs_review=ai_counts.get("needs_review", 0),
+            untriaged=ai_counts.get("untriaged", 0),
         ),
         recent_scans=[],  # Would need additional query
         top_repositories=[
@@ -705,6 +763,8 @@ async def list_findings(
     repository: Optional[str] = None,
     status: Optional[str] = None,
     severity: Optional[str] = None,
+    type: Optional[str] = None,
+    category: Optional[str] = None,
     search: Optional[str] = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
@@ -717,32 +777,52 @@ async def list_findings(
         except ValueError:
             pass
     
-    # Get all matching findings (we'll paginate in memory for now)
-    all_findings = db.get_findings(
-        scan_id=scan_id,
-        repository=repository,
-        status=status_filter,
-        severity=severity,
-        limit=1000,  # Get more for filtering
-    )
+    severity_filter: Optional[str | list[str]] = None
+    if severity:
+        severity_filter = [s.strip() for s in severity.split(",")] if "," in severity else severity
     
-    # Apply search filter if provided
-    if search:
-        search_lower = search.lower()
-        all_findings = [
-            f for f in all_findings
-            if search_lower in f.repository.lower()
-            or search_lower in f.category.lower()
-            or search_lower in f.file_path.lower()
-        ]
+    type_filter: Optional[str | list[str]] = None
+    if type:
+        type_filter = [t.strip() for t in type.split(",")] if "," in type else type
     
-    total = len(all_findings)
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    
-    # Paginate
-    start = (page - 1) * page_size
-    end = start + page_size
-    paginated = all_findings[start:end]
+    if hasattr(db, "get_findings_paginated_all"):
+        result = db.get_findings_paginated_all(
+            scan_id=scan_id,
+            repository=repository,
+            status=status_filter,
+            severity=severity_filter,
+            finding_type=type_filter,
+            category=category,
+            search=search,
+            page=page,
+            page_size=page_size,
+        )
+        paginated = result.get("items", [])
+        total = result.get("total", 0)
+        total_pages = result.get("total_pages", 1)
+    else:
+        # Fallback: in-memory pagination
+        all_findings = db.get_findings(
+            scan_id=scan_id,
+            repository=repository,
+            status=status_filter,
+            severity=severity_filter if isinstance(severity_filter, str) else None,
+            limit=1000,
+        )
+        if search:
+            search_lower = search.lower()
+            all_findings = [
+                f for f in all_findings
+                if search_lower in f.repository.lower()
+                or search_lower in f.category.lower()
+                or search_lower in f.file_path.lower()
+                or search_lower in (getattr(f, "line_content", "") or "").lower()
+            ]
+        total = len(all_findings)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        start = (page - 1) * page_size
+        end = start + page_size
+        paginated = all_findings[start:end]
     
     items = [
         FindingSummary(
@@ -762,6 +842,16 @@ async def list_findings(
             remediation_status=f.status.value if hasattr(f.status, 'value') else str(f.status),
             created_at=f.first_seen_date.isoformat() if f.first_seen_date else "",
             updated_at=f.last_seen_date.isoformat() if f.last_seen_date else "",
+            ai_triage=(
+                AITriageResult(
+                    label=f.ai_label,
+                    confidence=f.ai_confidence,
+                    reasons=f.ai_reasons,
+                    source=f.ai_source,
+                )
+                if getattr(f, "ai_label", "")
+                else None
+            ),
         )
         for f in paginated
     ]
@@ -773,6 +863,93 @@ async def list_findings(
         page_size=page_size,
         total_pages=total_pages,
     )
+
+
+@app.get("/api/findings/{finding_id}/ai-triage", response_model=AITriageResponse, tags=["Findings"])
+async def ai_triage_finding_endpoint(
+    finding_id: str,
+    user: Optional[AuthUser] = Depends(get_optional_user),
+) -> AITriageResponse:
+    """Get AI-assisted triage for a finding."""
+    if db is None or settings is None:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+    
+    finding = db.get_finding_by_id(finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    
+    result = await triage_finding(finding, settings.ai)
+    db.update_finding_ai_triage(
+        finding_id=finding_id,
+        ai_label=result["label"],
+        ai_confidence=result["confidence"],
+        ai_reasons=result["reasons"],
+        ai_source=result["source"],
+    )
+    return AITriageResponse(
+        finding_id=finding_id,
+        result=AITriageResult(**result),
+    )
+
+
+@app.post("/api/findings/{finding_id}/validate-secret", response_model=SecretValidationResponse, tags=["Findings"])
+async def validate_secret_endpoint(
+    finding_id: str,
+    user: Optional[AuthUser] = Depends(get_optional_user),
+) -> SecretValidationResponse:
+    """Validate a secret for a finding."""
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+    
+    finding = db.get_finding_by_id(finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    if finding.finding_type != "secret":
+        raise HTTPException(status_code=400, detail="Finding is not a secret")
+    
+    result = await validate_secret_for_finding(finding)
+    return SecretValidationResponse(
+        finding_id=finding_id,
+        result=SecretValidationResult(
+            status=result["status"],
+            provider=result.get("provider", "unknown"),
+            message=result.get("message", ""),
+            checked_at=datetime.now().isoformat(),
+        ),
+    )
+
+
+@app.post("/api/findings/ai-triage/batch", response_model=AITriageBatchResponse, tags=["Findings"])
+async def ai_triage_batch_endpoint(
+    payload: AITriageBatchRequest,
+    user: Optional[AuthUser] = Depends(get_optional_user),
+) -> AITriageBatchResponse:
+    """Run AI triage for a batch of findings."""
+    if db is None or settings is None:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+    
+    results: dict[str, AITriageResult] = {}
+    failed: list[str] = []
+    
+    for finding_id in payload.finding_ids:
+        finding = db.get_finding_by_id(finding_id)
+        if not finding:
+            failed.append(finding_id)
+            continue
+        try:
+            result = await triage_finding(finding, settings.ai)
+            db.update_finding_ai_triage(
+                finding_id=finding_id,
+                ai_label=result["label"],
+                ai_confidence=result["confidence"],
+                ai_reasons=result["reasons"],
+                ai_source=result["source"],
+            )
+            results[finding_id] = AITriageResult(**result)
+        except Exception:
+            failed.append(finding_id)
+    
+    return AITriageBatchResponse(results=results, failed=failed)
 
 
 @app.get("/api/findings/export/csv", tags=["Findings"])
@@ -844,6 +1021,7 @@ async def export_findings_csv(
             if search_lower in f.repository.lower()
             or search_lower in f.category.lower()
             or search_lower in f.file_path.lower()
+            or search_lower in (getattr(f, "line_content", "") or "").lower()
         ]
     
     # Create CSV in memory

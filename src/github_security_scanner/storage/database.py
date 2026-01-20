@@ -115,6 +115,11 @@ class Database:
                     cvss_score REAL,
                     tags TEXT,
                     notes TEXT,
+                    ai_label TEXT,
+                    ai_confidence REAL,
+                    ai_reasons TEXT,
+                    ai_source TEXT,
+                    ai_updated_at TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (scan_id) REFERENCES scans(id)
@@ -320,9 +325,9 @@ class Database:
 
     def _generate_fingerprint(self, finding: Finding) -> str:
         """Generate unique fingerprint for a finding."""
-        import hashlib
-        content = f"{finding.repository}:{finding.type.value}:{finding.category}:{finding.file_path}:{finding.line_content[:100]}"
-        return hashlib.sha256(content.encode()).hexdigest()[:32]
+        from ..utils.fingerprint import build_finding_fingerprint
+        
+        return build_finding_fingerprint(finding)
 
     def get_scan(self, scan_id: str) -> Optional[ScanRecord]:
         """Get a scan by ID."""
@@ -346,6 +351,56 @@ class Database:
                 high_count=row["high_count"],
                 medium_count=row["medium_count"],
                 low_count=row["low_count"],
+            )
+
+    def get_finding_by_id(self, finding_id: str) -> Optional[FindingRecord]:
+        """Get a single finding by ID."""
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM findings WHERE id = ?", (finding_id,)
+            ).fetchone()
+            
+            if not row:
+                return None
+            
+            return FindingRecord(
+                id=row["id"],
+                scan_id=row["scan_id"],
+                repository=row["repository"],
+                finding_type=row["finding_type"],
+                category=row["category"],
+                severity=row["severity"],
+                states=row["states"] or "",
+                file_path=row["file_path"] or "",
+                line_number=row["line_number"] or 0,
+                line_content=row["line_content"] or "",
+                rule_id=row["rule_id"] or "",
+                rule_description=row["rule_description"] or "",
+                remediation=row["remediation"] or "",
+                branch=row["branch"] or "",
+                commit_sha=row["commit_sha"] or "",
+                commit_date=datetime.fromisoformat(row["commit_date"]) if row["commit_date"] else None,
+                commit_author=row["commit_author"] or "",
+                fingerprint=row["fingerprint"] or "",
+                first_seen_scan_id=row["first_seen_scan_id"] or "",
+                first_seen_date=datetime.fromisoformat(row["first_seen_date"]) if row["first_seen_date"] else datetime.now(),
+                last_seen_scan_id=row["last_seen_scan_id"] or "",
+                last_seen_date=datetime.fromisoformat(row["last_seen_date"]) if row["last_seen_date"] else datetime.now(),
+                status=RemediationStatus(row["status"]) if row["status"] else RemediationStatus.OPEN,
+                assigned_to=row["assigned_to"] or "",
+                due_date=datetime.fromisoformat(row["due_date"]) if row["due_date"] else None,
+                resolved_date=datetime.fromisoformat(row["resolved_date"]) if row["resolved_date"] else None,
+                resolved_in_scan_id=row["resolved_in_scan_id"] or "",
+                confidence=row["confidence"] or 0.0,
+                cwe_id=row["cwe_id"] or "",
+                cvss_score=row["cvss_score"],
+                tags=row["tags"] or "",
+                notes=row["notes"] or "",
+                ai_label=row["ai_label"] or "",
+                ai_confidence=row["ai_confidence"] or 0.0,
+                ai_reasons=self._parse_ai_reasons(row["ai_reasons"]),
+                ai_source=row["ai_source"] or "",
+                ai_updated_at=datetime.fromisoformat(row["ai_updated_at"]) if row["ai_updated_at"] else None,
             )
 
     def get_scans(
@@ -423,13 +478,113 @@ class Database:
                     states=row["states"],
                     file_path=row["file_path"],
                     line_number=row["line_number"],
+                    line_content=row["line_content"] or "",
                     rule_id=row["rule_id"],
+                    rule_description=row["rule_description"] or "",
                     status=RemediationStatus(row["status"]),
                     first_seen_date=datetime.fromisoformat(row["first_seen_date"]) if row["first_seen_date"] else datetime.now(),
                     last_seen_date=datetime.fromisoformat(row["last_seen_date"]) if row["last_seen_date"] else datetime.now(),
+                    ai_label=row["ai_label"] or "",
+                    ai_confidence=row["ai_confidence"] or 0.0,
+                    ai_reasons=self._parse_ai_reasons(row["ai_reasons"]),
+                    ai_source=row["ai_source"] or "",
+                    ai_updated_at=datetime.fromisoformat(row["ai_updated_at"]) if row["ai_updated_at"] else None,
                 )
                 for row in rows
             ]
+
+    def get_findings_paginated_all(
+        self,
+        scan_id: Optional[str] = None,
+        repository: Optional[str] = None,
+        status: Optional[RemediationStatus] = None,
+        severity: Optional[str | list[str]] = None,
+        finding_type: Optional[str | list[str]] = None,
+        category: Optional[str] = None,
+        search: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict:
+        """Get paginated findings across all repositories with filters."""
+        query = "SELECT * FROM findings WHERE 1=1"
+        params: list = []
+        
+        if scan_id:
+            query += " AND last_seen_scan_id = ?"
+            params.append(scan_id)
+        if repository:
+            query += " AND repository = ?"
+            params.append(repository)
+        if status:
+            query += " AND status = ?"
+            params.append(status.value)
+        if severity:
+            if isinstance(severity, list):
+                placeholders = ",".join("?" * len(severity))
+                query += f" AND severity IN ({placeholders})"
+                params.extend(severity)
+            else:
+                query += " AND severity = ?"
+                params.append(severity)
+        if finding_type:
+            if isinstance(finding_type, list):
+                placeholders = ",".join("?" * len(finding_type))
+                query += f" AND finding_type IN ({placeholders})"
+                params.extend(finding_type)
+            else:
+                query += " AND finding_type = ?"
+                params.append(finding_type)
+        if category:
+            query += " AND category = ?"
+            params.append(category)
+        if search:
+            like = f"%{search}%"
+            query += " AND (repository LIKE ? OR category LIKE ? OR file_path LIKE ? OR line_content LIKE ? OR rule_id LIKE ?)"
+            params.extend([like, like, like, like, like])
+        
+        count_query = f"SELECT COUNT(*) as count FROM ({query}) as subquery"
+        
+        order_query = query + " ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, created_at DESC LIMIT ? OFFSET ?"
+        offset = (page - 1) * page_size
+        page_params = params + [page_size, offset]
+        
+        with self._connection() as conn:
+            total = conn.execute(count_query, params).fetchone()["count"]
+            rows = conn.execute(order_query, page_params).fetchall()
+            
+            items = [
+                FindingRecord(
+                    id=row["id"],
+                    scan_id=row["scan_id"],
+                    repository=row["repository"],
+                    finding_type=row["finding_type"],
+                    category=row["category"],
+                    severity=row["severity"],
+                    states=row["states"],
+                    file_path=row["file_path"],
+                    line_number=row["line_number"],
+                    line_content=row["line_content"] or "",
+                    rule_id=row["rule_id"],
+                    rule_description=row["rule_description"] or "",
+                    status=RemediationStatus(row["status"]),
+                    first_seen_date=datetime.fromisoformat(row["first_seen_date"]) if row["first_seen_date"] else datetime.now(),
+                    last_seen_date=datetime.fromisoformat(row["last_seen_date"]) if row["last_seen_date"] else datetime.now(),
+                    ai_label=row["ai_label"] or "",
+                    ai_confidence=row["ai_confidence"] or 0.0,
+                    ai_reasons=self._parse_ai_reasons(row["ai_reasons"]),
+                    ai_source=row["ai_source"] or "",
+                    ai_updated_at=datetime.fromisoformat(row["ai_updated_at"]) if row["ai_updated_at"] else None,
+                )
+                for row in rows
+            ]
+        
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, (total + page_size - 1) // page_size),
+        }
 
     def get_open_findings(self, organization: Optional[str] = None) -> list[FindingRecord]:
         """Get all open (unresolved) findings."""
@@ -461,6 +616,44 @@ class Database:
                 )
                 for row in rows
             ]
+
+    def update_finding_ai_triage(
+        self,
+        finding_id: str,
+        ai_label: str,
+        ai_confidence: float,
+        ai_reasons: list[str],
+        ai_source: str,
+    ) -> bool:
+        """Persist AI triage data for a finding."""
+        import json
+        
+        with self._connection() as conn:
+            now = datetime.now().isoformat()
+            result = conn.execute("""
+                UPDATE findings
+                SET ai_label = ?, ai_confidence = ?, ai_reasons = ?, ai_source = ?, ai_updated_at = ?, updated_at = ?
+                WHERE id = ?
+            """, (
+                ai_label,
+                ai_confidence,
+                json.dumps(ai_reasons or []),
+                ai_source,
+                now,
+                now,
+                finding_id,
+            ))
+            return result.rowcount > 0
+
+    def _parse_ai_reasons(self, value: Optional[str]) -> list[str]:
+        if not value:
+            return []
+        try:
+            import json
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except (ValueError, TypeError):
+            return []
 
     def update_finding_status(
         self,
@@ -649,6 +842,20 @@ class Database:
             type_rows = conn.execute(type_query).fetchall()
             type_counts = {row["finding_type"]: row["count"] for row in type_rows}
 
+            # AI triage counts
+            total_findings = conn.execute(
+                "SELECT COUNT(*) as count FROM findings"
+            ).fetchone()["count"]
+            ai_rows = conn.execute("""
+                SELECT ai_label, COUNT(*) as count
+                FROM findings
+                WHERE ai_label IS NOT NULL AND ai_label != ''
+                GROUP BY ai_label
+            """).fetchall()
+            ai_counts = {row["ai_label"]: row["count"] for row in ai_rows}
+            ai_labeled_total = sum(ai_counts.values())
+            ai_counts["untriaged"] = max(0, total_findings - ai_labeled_total)
+
             # Count unique repositories
             total_repos = conn.execute(
                 "SELECT COUNT(DISTINCT repository) as count FROM findings"
@@ -675,6 +882,7 @@ class Database:
                 "status_counts": status_counts,
                 "severity_counts": severity_counts,
                 "type_counts": type_counts,
+                "ai_triage_counts": ai_counts,
                 "average_findings_per_scan": round(avg_findings, 1),
                 "open_findings": status_counts.get("open", 0),
                 "fixed_findings": status_counts.get("fixed", 0),

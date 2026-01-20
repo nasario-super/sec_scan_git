@@ -25,6 +25,11 @@ class BaseAnalyzer(ABC):
 
     name: str = "base"
     description: str = "Base analyzer"
+    _noise_path_segments = {
+        "test", "tests", "__tests__", "spec", "specs",
+        "fixture", "fixtures", "example", "examples",
+        "sample", "samples", "mock", "mocks",
+    }
 
     def __init__(self, settings: Settings):
         """
@@ -102,6 +107,13 @@ class BaseAnalyzer(ABC):
             return True
 
         return False
+
+    def is_noise_path(self, file_path: Path | str) -> bool:
+        """
+        Check if a path is likely non-production (tests, examples, fixtures).
+        """
+        path = Path(file_path)
+        return any(part.lower() in self._noise_path_segments for part in path.parts)
 
     def _is_binary(self, file_path: Path) -> bool:
         """

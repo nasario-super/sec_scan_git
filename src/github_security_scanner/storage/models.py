@@ -136,6 +136,13 @@ class FindingRecord:
     tags: str = ""  # Comma-separated tags
     notes: str = ""
     
+    # AI triage (optional)
+    ai_label: str = ""
+    ai_confidence: float = 0.0
+    ai_reasons: list[str] = field(default_factory=list)
+    ai_source: str = ""
+    ai_updated_at: Optional[datetime] = None
+    
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     
@@ -161,6 +168,16 @@ class FindingRecord:
             "status": self.status.value,
             "first_seen_date": self.first_seen_date.isoformat(),
             "last_seen_date": self.last_seen_date.isoformat(),
+            "ai_triage": (
+                {
+                    "label": self.ai_label,
+                    "confidence": self.ai_confidence,
+                    "reasons": self.ai_reasons,
+                    "source": self.ai_source,
+                }
+                if self.ai_label
+                else None
+            ),
         }
 
 

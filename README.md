@@ -15,16 +15,18 @@ Uma ferramenta completa e profissional para análise de segurança automatizada 
 - **Análise SAST**: SQL Injection, XSS, Command Injection
 - **Scanner de IaC**: Terraform, Kubernetes, Docker misconfigurations
 - **Análise de Histórico Git**: Secrets removidos mas ainda no histórico
+- **Validação de Secrets (MVP)**: valida tokens/credenciais suportadas via botão na UI
 
 ### 🌐 Interface Web
 - **Dashboard**: Visão geral com gráficos e estatísticas
-- **Findings**: Lista filtrada de vulnerabilidades encontradas
+- **Findings**: Lista filtrada com paginação e busca por conteúdo (ex.: secret)
 - **Scans**: Histórico e execução de novos scans
 - **Repositories**: Visão por repositório
 - **Security Alerts**: Dashboard centralizado de alertas do GitHub (org-wide)
 - **Trends**: Gráficos de evolução temporal
 - **History**: Timeline de atividades
 - **Export CSV**: Exportação de dados
+- **AI Triage**: Classificação assistida e filtros por label
 
 ### 🔐 Segurança & Autenticação
 - **Login com JWT**: Tokens de acesso e refresh
@@ -103,9 +105,17 @@ curl -X POST http://localhost/api/scans \
   }'
 
 # Listar findings
-curl http://localhost/api/findings \
+curl "http://localhost/api/findings?page=1&page_size=200&search=AKIA" \
   -H "Authorization: Bearer <TOKEN>"
 ```
+
+### Validação de Secrets (MVP)
+Secrets suportadas no MVP:
+- **GitHub Tokens** (PAT / Fine-grained)
+- **AWS** (Access + Secret na mesma linha)
+- **Slack Tokens**
+
+O botão **Validar Secret** aparece somente para categorias suportadas.
 
 ### Security Alerts (GitHub)
 Para visualizar o **Dashboard centralizado de Security Alerts**, é necessário habilitar os recursos no GitHub:
@@ -239,6 +249,9 @@ sec_scan_git/
 | GET | `/api/findings/{id}` | Detalhes do finding |
 | PATCH | `/api/findings/{id}/status` | Atualizar status |
 | GET | `/api/findings/export/csv` | Exportar CSV |
+| GET | `/api/findings/{id}/ai-triage` | Triagem por IA |
+| POST | `/api/findings/ai-triage/batch` | Triagem em lote |
+| POST | `/api/findings/{id}/validate-secret` | Validar secret (MVP) |
 
 ### Dashboard
 | Método | Endpoint | Descrição |
@@ -296,6 +309,12 @@ GITHUB_TOKEN=ghp_seu_token
 # Ou GitHub App
 GITHUB_APP_ID=123456
 GITHUB_APP_PRIVATE_KEY=/path/to/key.pem
+
+# AI (opcional)
+AI__ENABLED=false
+AI__API_URL=https://api.openai.com/v1
+AI__API_KEY=seu_token
+AI__MODEL=gpt-4o-mini
 ```
 
 ### Arquivo config.yaml

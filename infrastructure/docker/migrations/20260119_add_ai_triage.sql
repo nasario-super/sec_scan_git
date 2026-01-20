@@ -1,0 +1,6 @@
+-- Add AI triage fields to findings table
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS ai_label VARCHAR(50);
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS ai_confidence REAL;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS ai_reasons JSONB;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS ai_source VARCHAR(50);
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS ai_updated_at TIMESTAMP WITH TIME ZONE;

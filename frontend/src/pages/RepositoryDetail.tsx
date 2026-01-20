@@ -24,6 +24,7 @@ import {
   XCircle,
   Filter,
   Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
@@ -42,7 +43,17 @@ import { formatDistanceToNow } from 'date-fns';
 import { SeverityBadge } from '../components/ui/SeverityBadge';
 import { useStore } from '../stores/useStore';
 import api from '../services/api';
-import type { Finding, Severity, FindingType, RemediationStatus, RepositoryStats, CategoryCount } from '../types';
+import type {
+  Finding,
+  Severity,
+  FindingType,
+  RemediationStatus,
+  RepositoryStats,
+  CategoryCount,
+  AITriageResult,
+  AITriageLabel,
+  SecretValidationResult,
+} from '../types';
 
 const SEVERITY_COLORS: Record<Severity, string> = {
   critical: '#ff1744',
@@ -69,16 +80,63 @@ const statusConfig: Record<RemediationStatus, { label: string; icon: React.Eleme
   accepted_risk: { label: 'Accepted Risk', icon: Eye, color: 'text-neon-purple' },
 };
 
-function FindingRow({ finding, expanded, onToggle, onStatusUpdate }: {
+type AITriageFilter = AITriageLabel | 'untriaged';
+
+const triageLabelConfig: Record<AITriageLabel, { label: string; color: string }> = {
+  likely_true_positive: { label: 'Likely True Positive', color: 'text-neon-red' },
+  false_positive: { label: 'Likely False Positive', color: 'text-neon-green' },
+  needs_review: { label: 'Needs Review', color: 'text-neon-yellow' },
+};
+
+const aiFilterOptions: AITriageFilter[] = [
+  'likely_true_positive',
+  'false_positive',
+  'needs_review',
+  'untriaged',
+];
+
+const validatableSecretCategories = new Set([
+  'aws_access_key',
+  'aws_secret_key',
+  'github_token',
+  'github_fine_grained',
+  'slack_token',
+]);
+
+const secretValidationConfig: Record<'valid' | 'invalid' | 'unknown', { label: string; color: string }> = {
+  valid: { label: 'Valid', color: 'text-neon-green' },
+  invalid: { label: 'Invalid', color: 'text-neon-red' },
+  unknown: { label: 'Unknown', color: 'text-neon-yellow' },
+};
+
+function FindingRow({
+  finding,
+  expanded,
+  onToggle,
+  onStatusUpdate,
+  aiTriage,
+  aiLoading,
+  onAITriage,
+  secretValidation,
+  secretValidationLoading,
+  onValidateSecret,
+}: {
   finding: Finding;
   expanded: boolean;
   onToggle: () => void;
   onStatusUpdate: (status: RemediationStatus) => void;
+  aiTriage?: AITriageResult;
+  aiLoading?: boolean;
+  onAITriage: () => void;
+  secretValidation?: SecretValidationResult;
+  secretValidationLoading?: boolean;
+  onValidateSecret: () => void;
 }) {
   const status = statusConfig[finding.remediation_status] || statusConfig.open;
   const StatusIcon = status.icon;
   const typeConfig = TYPE_CONFIG[finding.type] || { label: finding.type, icon: Code, color: 'text-gray-400' };
   const TypeIcon = typeConfig.icon;
+  const canValidateSecret = finding.type === 'secret' && validatableSecretCategories.has(finding.category);
 
   return (
     <>
@@ -98,6 +156,22 @@ function FindingRow({ finding, expanded, onToggle, onStatusUpdate }: {
           </div>
         </td>
         <td className="px-4 py-3">
+          {aiTriage ? (
+            <span
+              className={clsx(
+                'inline-flex items-center px-2 py-0.5 text-xs rounded-md border',
+                aiTriage.label === 'likely_true_positive' && 'border-neon-red/40 text-neon-red',
+                aiTriage.label === 'false_positive' && 'border-neon-green/40 text-neon-green',
+                aiTriage.label === 'needs_review' && 'border-neon-yellow/40 text-neon-yellow'
+              )}
+            >
+              {triageLabelConfig[aiTriage.label].label}
+            </span>
+          ) : (
+            <span className="text-xs text-gray-500">Untriaged</span>
+          )}
+        </td>
+        <td className="px-4 py-3">
           <div className="flex items-center gap-2">
             <FileCode className="w-4 h-4 text-gray-500" />
             <span className="text-sm text-gray-400 font-mono truncate max-w-xs">
@@ -115,7 +189,7 @@ function FindingRow({ finding, expanded, onToggle, onStatusUpdate }: {
       </tr>
       {expanded && (
         <tr className="bg-cyber-surface/30">
-          <td colSpan={5} className="px-4 py-4">
+          <td colSpan={6} className="px-4 py-4">
             <div className="space-y-4">
               {finding.line_content && (
                 <div>
@@ -193,7 +267,91 @@ function FindingRow({ finding, expanded, onToggle, onStatusUpdate }: {
                     </button>
                   );
                 })}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAITriage();
+                  }}
+                  className={clsx(
+                    'ml-2 px-3 py-1 text-xs rounded-md border transition-colors flex items-center gap-1',
+                    aiLoading
+                      ? 'border-cyber-border text-gray-500 cursor-not-allowed'
+                      : 'border-neon-purple/50 text-neon-purple hover:border-neon-purple'
+                  )}
+                  disabled={aiLoading}
+                  title="AI triage"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {aiLoading ? 'AI...' : 'AI Triage'}
+                </button>
+                {canValidateSecret && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onValidateSecret();
+                    }}
+                    className={clsx(
+                      'px-3 py-1 text-xs rounded-md border transition-colors flex items-center gap-1',
+                      secretValidationLoading
+                        ? 'border-cyber-border text-gray-500 cursor-not-allowed'
+                        : 'border-neon-blue/50 text-neon-blue hover:border-neon-blue'
+                    )}
+                    disabled={secretValidationLoading}
+                    title="Validar secret"
+                  >
+                    <Key className="w-3.5 h-3.5" />
+                    {secretValidationLoading ? 'Validando...' : 'Validar Secret'}
+                  </button>
+                )}
               </div>
+
+              {aiTriage && (
+                <div className="mt-4 rounded-lg border border-cyber-border bg-cyber-surface/40 p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-gray-300">
+                      AI Triage
+                    </p>
+                    <span className="text-xs text-gray-500 uppercase tracking-wide">
+                      {aiTriage.source}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className={clsx('text-sm font-medium', triageLabelConfig[aiTriage.label].color)}>
+                      {triageLabelConfig[aiTriage.label].label}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      Confidence {Math.round(aiTriage.confidence * 100)}%
+                    </span>
+                  </div>
+                  <ul className="mt-3 space-y-1 text-sm text-gray-400 list-disc list-inside">
+                    {aiTriage.reasons.map((reason, index) => (
+                      <li key={`${finding.id}-reason-${index}`}>{reason}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {secretValidation && (
+                <div className="rounded-lg border border-cyber-border bg-cyber-surface/40 p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-gray-300">
+                      Secret Validation
+                    </p>
+                    <span className="text-xs text-gray-500 uppercase tracking-wide">
+                      {secretValidation.provider}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className={clsx('text-sm font-medium', secretValidationConfig[secretValidation.status].color)}>
+                      {secretValidationConfig[secretValidation.status].label}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {new Date(secretValidation.checked_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm text-gray-400">{secretValidation.message}</p>
+                </div>
+              )}
             </div>
           </td>
         </tr>
@@ -213,6 +371,11 @@ export function RepositoryDetail() {
   const [findingsLoading, setFindingsLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [aiTriage, setAiTriage] = useState<Record<string, AITriageResult>>({});
+  const [aiLoading, setAiLoading] = useState<Record<string, boolean>>({});
+  const [aiFilters, setAiFilters] = useState<AITriageFilter[]>([]);
+  const [secretValidation, setSecretValidation] = useState<Record<string, SecretValidationResult>>({});
+  const [secretValidationLoading, setSecretValidationLoading] = useState<Record<string, boolean>>({});
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -276,6 +439,13 @@ export function RepositoryDetail() {
       }));
       
       setFindings(items);
+      const triageMap = items.reduce<Record<string, AITriageResult>>((acc, item) => {
+        if (item.ai_triage) {
+          acc[item.id] = item.ai_triage;
+        }
+        return acc;
+      }, {});
+      setAiTriage((prev) => ({ ...prev, ...triageMap }));
       setTotalPages(response.total_pages || 1);
       setTotalFindings(response.total || 0);
     } catch (error) {
@@ -303,6 +473,101 @@ export function RepositoryDetail() {
         title: 'Update Failed',
         message: 'Failed to update finding status',
       });
+    }
+  };
+
+  const handleAITriage = async (findingId: string) => {
+    if (aiLoading[findingId]) {
+      return;
+    }
+    setAiLoading((prev) => ({ ...prev, [findingId]: true }));
+    try {
+      const response = await api.getFindingAITriage(findingId);
+      setAiTriage((prev) => ({ ...prev, [findingId]: response.result }));
+      addNotification({
+        type: 'success',
+        title: 'AI Triage Ready',
+        message: 'Sugestao de triagem gerada com sucesso.',
+      });
+    } catch (error) {
+      console.error('AI triage failed:', error);
+      addNotification({
+        type: 'error',
+        title: 'AI Triage Failed',
+        message: 'Nao foi possivel gerar a triagem automatica.',
+      });
+    } finally {
+      setAiLoading((prev) => ({ ...prev, [findingId]: false }));
+    }
+  };
+
+  const handleBatchAITriage = async () => {
+    const targetIds = filteredFindings.map((f) => f.id);
+    if (targetIds.length === 0) {
+      return;
+    }
+    setAiLoading((prev) => {
+      const next = { ...prev };
+      targetIds.forEach((id) => {
+        next[id] = true;
+      });
+      return next;
+    });
+    try {
+      const response = await api.getFindingsAITriageBatch(targetIds);
+      setAiTriage((prev) => ({ ...prev, ...response.results }));
+      addNotification({
+        type: 'success',
+        title: 'AI Triage Ready',
+        message: `Triagem gerada para ${Object.keys(response.results).length} findings.`,
+      });
+      if (response.failed?.length) {
+        addNotification({
+          type: 'warning',
+          title: 'AI Triage Partial',
+          message: `${response.failed.length} findings falharam na triagem.`,
+        });
+      }
+    } catch (error) {
+      console.error('AI triage batch failed:', error);
+      addNotification({
+        type: 'error',
+        title: 'AI Triage Failed',
+        message: 'Nao foi possivel gerar a triagem em lote.',
+      });
+    } finally {
+      setAiLoading((prev) => {
+        const next = { ...prev };
+        targetIds.forEach((id) => {
+          next[id] = false;
+        });
+        return next;
+      });
+    }
+  };
+
+  const handleValidateSecret = async (findingId: string) => {
+    if (secretValidationLoading[findingId]) {
+      return;
+    }
+    setSecretValidationLoading((prev) => ({ ...prev, [findingId]: true }));
+    try {
+      const response = await api.validateFindingSecret(findingId);
+      setSecretValidation((prev) => ({ ...prev, [findingId]: response.result }));
+      addNotification({
+        type: 'success',
+        title: 'Secret Validada',
+        message: response.result.message || 'Validacao concluida.',
+      });
+    } catch (error) {
+      console.error('Secret validation failed:', error);
+      addNotification({
+        type: 'error',
+        title: 'Validacao Falhou',
+        message: 'Nao foi possivel validar a secret.',
+      });
+    } finally {
+      setSecretValidationLoading((prev) => ({ ...prev, [findingId]: false }));
     }
   };
 
@@ -385,6 +650,12 @@ export function RepositoryDetail() {
     setCurrentPage(1);
   };
 
+  const toggleAiFilter = (value: AITriageFilter) => {
+    setAiFilters((prev) =>
+      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
+    );
+  };
+
   // Note: Category filter is set directly from category buttons in categoriesByType section
 
   // Charts data
@@ -411,6 +682,15 @@ export function RepositoryDetail() {
       categoriesByType[cat.type].push(cat);
     });
   }
+
+  const filteredFindings = findings.filter((f) => {
+    if (aiFilters.length === 0) {
+      return true;
+    }
+    const triage = aiTriage[f.id];
+    const label: AITriageFilter = triage?.label || 'untriaged';
+    return aiFilters.includes(label);
+  });
 
   if (loading) {
     return (
@@ -742,6 +1022,29 @@ export function RepositoryDetail() {
             </span>
           )}
         </div>
+        <div className="mt-3 flex items-center gap-2 flex-wrap">
+          <Sparkles className="w-4 h-4 text-gray-500" />
+          <span className="text-sm text-gray-400 mr-2">AI triage:</span>
+          {aiFilterOptions.map((label) => {
+            const config = label === 'untriaged'
+              ? { label: 'Untriaged', color: 'text-gray-400' }
+              : triageLabelConfig[label];
+            return (
+              <button
+                key={label}
+                onClick={() => toggleAiFilter(label)}
+                className={clsx(
+                  'px-3 py-1 rounded-md border transition-colors text-sm',
+                  aiFilters.includes(label)
+                    ? 'bg-neon-blue/20 border-neon-blue text-neon-blue'
+                    : 'border-cyber-border text-gray-400 hover:border-gray-500'
+                )}
+              >
+                <span className={clsx(config.color)}>{config.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Findings Table */}
@@ -750,10 +1053,20 @@ export function RepositoryDetail() {
           <h3 className="text-lg font-semibold text-gray-100">
             Findings
             <span className="text-gray-500 font-normal ml-2">
-              (Showing {findings.length} of {totalFindings.toLocaleString()})
+              (Showing {filteredFindings.length} of {totalFindings.toLocaleString()})
             </span>
           </h3>
-          {findingsLoading && <Loader2 className="w-5 h-5 text-neon-blue animate-spin" />}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleBatchAITriage}
+              className="btn-ghost flex items-center gap-2"
+              disabled={filteredFindings.length === 0}
+            >
+              <Sparkles className="w-4 h-4" />
+              AI Triage visiveis ({filteredFindings.length})
+            </button>
+            {findingsLoading && <Loader2 className="w-5 h-5 text-neon-blue animate-spin" />}
+          </div>
         </div>
         <table className="w-full">
           <thead>
@@ -761,24 +1074,31 @@ export function RepositoryDetail() {
               <th className="w-10 px-4 py-3"></th>
               <th className="px-4 py-3 text-left">Severity</th>
               <th className="px-4 py-3 text-left">Category</th>
+              <th className="px-4 py-3 text-left">AI</th>
               <th className="px-4 py-3 text-left">Location</th>
               <th className="px-4 py-3 text-left">Status</th>
             </tr>
           </thead>
           <tbody>
-            {findings.map((finding) => (
+            {filteredFindings.map((finding) => (
               <FindingRow
                 key={finding.id}
                 finding={finding}
                 expanded={expandedId === finding.id}
                 onToggle={() => setExpandedId(expandedId === finding.id ? null : finding.id)}
                 onStatusUpdate={(status) => handleStatusUpdate(finding.id, status)}
+                aiTriage={aiTriage[finding.id]}
+                aiLoading={aiLoading[finding.id]}
+                onAITriage={() => handleAITriage(finding.id)}
+                secretValidation={secretValidation[finding.id]}
+                secretValidationLoading={secretValidationLoading[finding.id]}
+                onValidateSecret={() => handleValidateSecret(finding.id)}
               />
             ))}
           </tbody>
         </table>
 
-        {findings.length === 0 && !findingsLoading && (
+        {filteredFindings.length === 0 && !findingsLoading && (
           <div className="p-12 text-center">
             <CheckCircle className="w-12 h-12 text-neon-green mx-auto mb-4" />
             <p className="text-gray-400">

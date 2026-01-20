@@ -15,6 +15,7 @@ import {
   Cloud,
   History,
   ShieldAlert,
+  Sparkles,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -56,6 +57,12 @@ const emptyStats: DashboardStats = {
     sast: 0,
     iac: 0,
     history: 0,
+  },
+  ai_triage_counts: {
+    likely_true_positive: 0,
+    false_positive: 0,
+    needs_review: 0,
+    untriaged: 0,
   },
   recent_scans: [],
   top_repositories: [],
@@ -359,6 +366,12 @@ function TypeStatCard({ type, count, total }: { type: string; count: number; tot
 // Default empty severity for safety
 const defaultSeverity = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
 const defaultFindingTypes = { secret: 0, vulnerability: 0, sast: 0, iac: 0, history: 0 };
+const defaultAiTriageCounts = {
+  likely_true_positive: 0,
+  false_positive: 0,
+  needs_review: 0,
+  untriaged: 0,
+};
 
 export function Dashboard() {
   const [stats, setStats] = useState<DashboardStats>(emptyStats);
@@ -384,6 +397,10 @@ export function Dashboard() {
             ...defaultFindingTypes,
             ...(dashboardData.findings_by_type || {}),
           },
+          ai_triage_counts: {
+            ...defaultAiTriageCounts,
+            ...(dashboardData.ai_triage_counts || {}),
+          },
           top_repositories: dashboardData.top_repositories || [],
           recent_scans: dashboardData.recent_scans || [],
         };
@@ -404,6 +421,7 @@ export function Dashboard() {
   const typeData = stats.findings_by_type || defaultFindingTypes;
   const openFindingsCount = (severityData.critical || 0) + (severityData.high || 0);
   const totalTypeFindings = Object.values(typeData).reduce((a, b) => a + b, 0);
+  const aiData = stats.ai_triage_counts || defaultAiTriageCounts;
 
   if (loading) {
     return (
@@ -468,6 +486,49 @@ export function Dashboard() {
           {Object.entries(typeData).map(([type, count]) => (
             <TypeStatCard key={type} type={type} count={count} total={totalTypeFindings} />
           ))}
+        </div>
+      </div>
+
+      {/* AI Triage Summary */}
+      <div className="card-glow">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="section-title">
+            <Sparkles className="w-5 h-5 text-neon-purple" />
+            AI Triage Overview
+          </h3>
+          <Link to="/findings" className="text-sm text-neon-blue hover:underline flex items-center gap-1">
+            View Findings <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Link
+            to="/findings"
+            className="flex items-center justify-between p-3 rounded-lg bg-neon-red/10 border border-neon-red/30 hover:bg-neon-red/20 transition-all"
+          >
+            <span className="text-sm text-gray-200">Likely True</span>
+            <span className="text-lg font-bold text-neon-red">{aiData.likely_true_positive}</span>
+          </Link>
+          <Link
+            to="/findings"
+            className="flex items-center justify-between p-3 rounded-lg bg-neon-green/10 border border-neon-green/30 hover:bg-neon-green/20 transition-all"
+          >
+            <span className="text-sm text-gray-200">Likely False</span>
+            <span className="text-lg font-bold text-neon-green">{aiData.false_positive}</span>
+          </Link>
+          <Link
+            to="/findings"
+            className="flex items-center justify-between p-3 rounded-lg bg-neon-yellow/10 border border-neon-yellow/30 hover:bg-neon-yellow/20 transition-all"
+          >
+            <span className="text-sm text-gray-200">Needs Review</span>
+            <span className="text-lg font-bold text-neon-yellow">{aiData.needs_review}</span>
+          </Link>
+          <Link
+            to="/findings"
+            className="flex items-center justify-between p-3 rounded-lg bg-cyber-surface/50 border border-cyber-border/50 hover:border-neon-blue/30 transition-all"
+          >
+            <span className="text-sm text-gray-200">Untriaged</span>
+            <span className="text-lg font-bold text-gray-100">{aiData.untriaged}</span>
+          </Link>
         </div>
       </div>
 

@@ -9,6 +9,9 @@ import type {
   ScansFilter,
   TrendData,
   RemediationStatus,
+  AITriageResponse,
+  AITriageBatchResponse,
+  SecretValidationResponse,
 } from '../types';
 
 // Use relative URL by default (for Nginx proxy), or explicit URL from env
@@ -294,6 +297,23 @@ class ApiService {
 
   async getFinding(findingId: string): Promise<Finding> {
     return this.request(`/findings/${findingId}`);
+  }
+
+  async getFindingAITriage(findingId: string): Promise<AITriageResponse> {
+    return this.request(`/findings/${findingId}/ai-triage`);
+  }
+
+  async getFindingsAITriageBatch(findingIds: string[]): Promise<AITriageBatchResponse> {
+    return this.request('/findings/ai-triage/batch', {
+      method: 'POST',
+      body: JSON.stringify({ finding_ids: findingIds }),
+    });
+  }
+
+  async validateFindingSecret(findingId: string): Promise<SecretValidationResponse> {
+    return this.request(`/findings/${findingId}/validate-secret`, {
+      method: 'POST',
+    });
   }
 
   async updateFindingStatus(
