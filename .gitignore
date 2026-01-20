@@ -127,22 +127,6 @@ reports/
 scan-*.json
 scan-*.html
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-
-# =============================================================================
-# Security - Sensitive Files
-# =============================================================================
-
 # Database files
 *.db
 *.sqlite
@@ -153,6 +137,17 @@ security_scans.db
 data/
 repos/
 logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Keys and certificates
 *.pem
@@ -178,10 +173,6 @@ docker-data/
 .terraform/
 .terraform.lock.hcl
 
-# Node modules (should use frontend/node_modules already)
-node_modules/
-
-# Temporary files
-*.tmp
-*.temp
-*.bak
+# Node
+frontend/node_modules/
+web/node_modules/
